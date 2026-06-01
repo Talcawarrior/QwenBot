@@ -1,0 +1,2 @@
+# QwenBot
+Deniyorum bakalim

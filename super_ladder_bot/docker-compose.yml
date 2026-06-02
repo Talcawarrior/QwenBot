@@ -1,0 +1,40 @@
+# PolyMarkets Super Ladder Bot - Docker Configuration
+version: '3.8'
+
+services:
+  bot:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: polymarket-ladder-bot
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Frontend (to be added)
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #   container_name: ladder-bot-frontend
+  #   ports:
+  #     - "3000:3000"
+  #   depends_on:
+  #     - bot
+
+networks:
+  default:
+    name: ladder-bot-network

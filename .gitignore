@@ -1,4 +1,7 @@
 ```
+# Database files
+*.db
+
 # Python
 __pycache__/
 *.pyc
@@ -8,6 +11,13 @@ __pycache__/
 env/
 venv/
 .venv/
+.ENV
+.ENV.local
+.env
+.env.local
+.env.*
+.env.local.*
+.python-version
 pip-log.txt
 pip-delete-this-directory.txt
 .tox/
@@ -18,19 +28,7 @@ nosetests.xml
 coverage.xml
 *.cover
 *.log
+.git/modules/
 .DS_Store
 Thumbs.db
-
-# Environment variables
-.env
-
-# Database
-data/bot.db
-
-# Dependencies
-backend/requirements.txt
-
-# Docker
-Dockerfile
-docker-compose.yml
 ```

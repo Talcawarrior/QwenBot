@@ -1,9 +1,11 @@
 """
 Betting Engine - Kelly Criterion + Edge + EV Hesaplama
-Fractional Kelly ile pozisyon boyutlandırma
+Fractional Kelly (%15) + Smart Pool (%40) ile pozisyon boyutlandırma
+PolyTempAI Standardı: DEB Consensus + Normal CDF
 """
 import logging
-from typing import Dict, Optional
+import math
+from typing import Dict, Optional, List
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -13,23 +15,124 @@ class BettingEngine:
     """Pozisyon boyutlandırma ve sinyal analizi"""
     
     def __init__(self):
-        self.kelly_fraction = config.KELLY_FRACTION
-        self.max_bet_pct = config.MAX_BET_PCT
-        self.edge_threshold = config.EDGE_THRESHOLD
+        self.kelly_fraction = config.KELLY_FRACTION  # %15 Fractional Kelly
+        self.max_bet_pct = config.MAX_BET_PCT  # %3 Hard Cap
+        self.edge_threshold = config.EDGE_THRESHOLD  # %3 Minimum Edge
+        self.smart_pool_pct = config.SMART_POOL_PCT  # %40 Akıllı Havuz
+    
+    def normal_cdf(self, x: float) -> float:
+        """
+        Normal Distribution CDF (Abramowitz & Stegun yaklaşımı)
+        PolyTempAI standardı - olasılık hesabında endüstri standardı
+        
+        Args:
+            x: Z-score
+        
+        Returns:
+            CDF değeri (0-1 arası)
+        """
+        # Constants for Abramowitz & Stegun approximation
+        a1, a2, a3, a4, a5 = 0.254829592, -0.284496736, 1.421413741, -1.453152027, 1.061405429
+        p = 0.3275911
+        
+        # Save the sign of x
+        sign = 1 if x >= 0 else -1
+        x = abs(x) / math.sqrt(2)
+        
+        # A&S formula 7.1.26
+        t = 1.0 / (1.0 + p * x)
+        y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * math.exp(-x * x)
+        
+        return 0.5 * (1.0 + sign * y)
+    
+    def calculate_deb_probability(
+        self,
+        model_forecasts: List[Dict],
+        strike_temp: float,
+        bet_type: str  # "HIGH" or "LOW"
+    ) -> float:
+        """
+        DEB Consensus ile olasılık hesapla (Normal CDF kullanarak)
+        
+        Args:
+            model_forecasts: Her modelin tahmini ve ağırlığı
+                [{"model": "gfs", "temp": 85.5, "weight": 0.45, "std": 3.2}, ...]
+            strike_temp: Strike sıcaklık
+            bet_type: "HIGH" (Temp > Strike) veya "LOW" (Temp < Strike)
+        
+        Returns:
+            P(Temp > Strike) veya P(Temp < Strike)
+        """
+        if not model_forecasts:
+            return 0.5
+        
+        # Weighted mean hesapla
+        weighted_sum = sum(f["temp"] * f["weight"] for f in model_forecasts)
+        total_weight = sum(f["weight"] for f in model_forecasts)
+        weighted_mean = weighted_sum / total_weight if total_weight > 0 else 0
+        
+        # Weighted std dev hesapla (variance pooling)
+        weighted_var = sum(
+            f["weight"] * (f.get("std", 3.0) ** 2) 
+            for f in model_forecasts
+        ) / total_weight
+        weighted_std = math.sqrt(weighted_var) if weighted_var > 0 else 3.0
+        
+        # Z-score hesapla
+        z_score = (strike_temp - weighted_mean) / weighted_std
+        
+        # Normal CDF ile olasılık hesapla
+        cdf_value = self.normal_cdf(z_score)
+        
+        if bet_type == "HIGH":
+            # P(Temp > Strike) = 1 - CDF
+            probability = 1 - cdf_value
+        else:  # LOW
+            # P(Temp < Strike) = CDF
+            probability = cdf_value
+        
+        return round(probability, 4)
+    
+    def apply_bias_correction(
+        self,
+        raw_forecast: float,
+        model_bias: float
+    ) -> float:
+        """
+        NOWBot standardı: Model bias correction
+        Son 45 günün ortalama sapması tahminden düşülür
+        
+        Args:
+            raw_forecast: Ham model tahmini
+            model_bias: Modelin son 45 günlük ortalama sapması
+        
+        Returns:
+            Bias-corrected forecast
+        """
+        if not config.USE_BIAS_CORRECTION:
+            return raw_forecast
+        
+        return raw_forecast - model_bias
     
     def calculate_bet_size(
         self,
         model_probability: float,
         market_price: float,
-        portfolio_capital: float
+        portfolio_capital: float,
+        use_smart_pool: bool = True
     ) -> float:
         """
         Fractional Kelly criterion ile bet size hesapla
+        
+        Hybrid Strategy (%40 Smart Pool):
+        - Günlük başlangıç sermayesinin %40'ı "İşlem Havuzu" olarak ayrılır
+        - Eligible sinyaller EV büyüklüklerine göre bu havuzdan pay alır
         
         Args:
             model_probability: Modelin tahmin ettiği win probability (0-1)
             market_price: Market price (örn: 0.58 = %58 implied probability)
             portfolio_capital: Mevcut portfolio değeri
+            use_smart_pool: %40 Smart Pool kullanılsın mı?
         
         Returns:
             Önerilen bet size ($)
@@ -59,10 +162,16 @@ class BettingEngine:
         # Fractional Kelly (%15)
         fractional_kelly = full_kelly * self.kelly_fraction
         
-        # Dollar amount
-        kelly_size = fractional_kelly * portfolio_capital
+        # Smart Pool kullanılıyorsa: %40 havuz üzerinden hesapla
+        if use_smart_pool:
+            effective_capital = portfolio_capital * self.smart_pool_pct
+        else:
+            effective_capital = portfolio_capital
         
-        # Hard limit: max %3 of capital
+        # Dollar amount
+        kelly_size = fractional_kelly * effective_capital
+        
+        # Hard limit: max %3 of capital (suislanchez standardı)
         max_size = portfolio_capital * self.max_bet_pct
         
         # Minimum bet size: $5

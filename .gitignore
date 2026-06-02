@@ -1,7 +1,4 @@
 ```
-# Database files
-*.db
-
 # Python
 __pycache__/
 *.pyc
@@ -12,12 +9,7 @@ env/
 venv/
 .venv/
 .ENV
-.ENV.local
-.env
-.env.local
-.env.*
-.env.local.*
-.python-version
+.venv.bak/
 pip-log.txt
 pip-delete-this-directory.txt
 .tox/

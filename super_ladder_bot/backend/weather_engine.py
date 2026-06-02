@@ -108,12 +108,23 @@ class WeatherEngine:
     async def get_multi_model_forecast(
         self, 
         lat: float, 
-        lon: float
+        lon: float,
+        city_name: str = "Unknown"
     ) -> Dict:
         """
-        Tüm modellerden paralel veri çek
+        Tüm modellerden paralel veri çek (8+ Model - NOWBot Standardı)
         Ensemble forecast için kullanılır
+        
+        Args:
+            lat: Latitude
+            lon: Longitude
+            city_name: Şehir adı (log için)
+        
+        Returns:
+            All model forecasts + DEB Consensus
         """
+        logger.info(f"Fetching weather data for {city_name} ({lat}, {lon})")
+        
         tasks = [
             self.get_forecast(lat, lon, model)
             for model in self.endpoints.keys()
@@ -132,15 +143,104 @@ class WeatherEngine:
                 model_forecasts[model] = result
                 valid_count += 1
         
-        # Ensemble hesapla
-        ensemble = self._calculate_ensemble(model_forecasts)
+        logger.info(f"Weather data fetched for {city_name}: {valid_count}/{len(self.endpoints)} models OK")
+        
+        # DEB Consensus hesapla (config'deki ağırlıklarla)
+        deb_consensus = self._calculate_deb_consensus(model_forecasts)
         
         return {
             'models': model_forecasts,
-            'ensemble': ensemble,
+            'deb_consensus': deb_consensus,
             'valid_models': valid_count,
             'total_models': len(self.endpoints),
             'generated_at': datetime.now().isoformat()
+        }
+    
+    def _calculate_deb_consensus(self, model_forecasts: Dict) -> Dict:
+        """
+        DEB Consensus hesapla (PolyTempAI Standardı)
+        Config'deki model ağırlıklarını kullanarak weighted mean ve std dev
+        
+        Args:
+            model_forecasts: Her modelin forecast verisi
+        
+        Returns:
+            DEB Consensus: weighted_mean, weighted_std, confidence
+        """
+        if not model_forecasts:
+            return None
+        
+        from config import config
+        normalized_weights = config.get_normalized_model_weights()
+        
+        # Her gün için DEB consensus hesapla
+        all_forecasts = list(model_forecasts.values())
+        if not all_forecasts:
+            return None
+        
+        first_model = all_forecasts[0]
+        consensus_forecasts = []
+        
+        for i, forecast_day in enumerate(first_model.get('forecasts', [])):
+            date = forecast_day.get('date')
+            
+            # Her modelin o günkü tahminini topla
+            temps = []
+            weights_used = []
+            
+            for model_name, model_data in model_forecasts.items():
+                if i < len(model_data.get('forecasts', [])):
+                    day_data = model_data['forecasts'][i]
+                    max_temp = day_data.get('max_temp_f')
+                    min_temp = day_data.get('min_temp_f')
+                    
+                    if max_temp is not None and min_temp is not None:
+                        avg_temp = (max_temp + min_temp) / 2
+                        weight = normalized_weights.get(model_name, 0.05)
+                        temps.append(avg_temp)
+                        weights_used.append(weight)
+            
+            if not temps:
+                continue
+            
+            # Weighted mean
+            total_weight = sum(weights_used)
+            if total_weight == 0:
+                continue
+            
+            weighted_mean = sum(t * w for t, w in zip(temps, weights_used)) / total_weight
+            
+            # Weighted std dev (variance pooling)
+            weighted_var = sum(
+                w * ((t - weighted_mean) ** 2) 
+                for t, w in zip(temps, weights_used)
+            ) / total_weight
+            weighted_std = weighted_var ** 0.5
+            
+            # Confidence: model agreement ne kadar yüksekse o kadar iyi
+            # Std dev düşük = yüksek confidence
+            confidence = max(0, 1 - (weighted_std / 10))  # Normalize 0-1
+            
+            consensus_forecasts.append({
+                'date': date,
+                'weighted_mean_temp': round(weighted_mean, 2),
+                'weighted_std': round(weighted_std, 2),
+                'confidence': round(confidence, 4),
+                'num_models': len(temps)
+            })
+        
+        # Genel istatistikler
+        all_temps = [f['weighted_mean_temp'] for f in consensus_forecasts if f]
+        avg_confidence = sum(f['confidence'] for f in consensus_forecasts if f) / len(consensus_forecasts) if consensus_forecasts else 0
+        
+        return {
+            'forecasts': consensus_forecasts,
+            'avg_confidence': round(avg_confidence, 4),
+            'avg_temp': round(sum(all_temps) / len(all_temps), 2) if all_temps else None,
+            'temp_range': {
+                'min': round(min(all_temps), 2) if all_temps else None,
+                'max': round(max(all_temps), 2) if all_temps else None
+            }
         }
     
     def _calculate_ensemble(self, model_forecasts: Dict) -> Dict:

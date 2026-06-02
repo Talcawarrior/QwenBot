@@ -18,7 +18,8 @@ class Config:
     DRY_RUN: bool = field(default_factory=lambda: os.getenv("DRY_RUN", "true").lower() == "true")
     STARTING_CAPITAL: float = field(default_factory=lambda: float(os.getenv("STARTING_CAPITAL", "1000.0")))
     
-    # === RİSK YÖNETİMİ ===
+    # === RİSK YÖNETİMİ - HYBRID STRATEGY (%40 SMART POOL) ===
+    SMART_POOL_PCT: float = field(default_factory=lambda: float(os.getenv("SMART_POOL_PCT", "0.40")))  # %40 Akıllı Havuz
     TOTAL_EXPOSURE_PCT: float = field(default_factory=lambda: float(os.getenv("TOTAL_EXPOSURE_PCT", "0.25")))
     MAX_BET_PCT: float = field(default_factory=lambda: float(os.getenv("MAX_BET_PCT", "0.03")))
     EDGE_THRESHOLD: float = field(default_factory=lambda: float(os.getenv("EDGE_THRESHOLD", "0.03")))
@@ -26,6 +27,22 @@ class Config:
     DAILY_LOSS_LIMIT: float = field(default_factory=lambda: float(os.getenv("DAILY_LOSS_LIMIT", "0.05")))
     MAX_BETS_PER_CITY: int = field(default_factory=lambda: int(os.getenv("MAX_BETS_PER_CITY", "4")))
     MAX_REGIONAL_EXPOSURE_PCT: float = 0.10  # Bölge başına max %10
+    
+    # === HAVA DURUMU MODEL AĞIRLIKLARI (DEB Consensus) ===
+    MODEL_WEIGHTS: Dict[str, float] = field(default_factory=lambda: {
+        "gfs_ensemble": 0.45,      # %45 ağırlık (ana model)
+        "ecmwf_ifs025": 0.35,      # %35 ağırlık (yüksek doğruluk)
+        "hrrr": 0.20,              # %20 ağırlık (kısa vadeli)
+        "cma": 0.05,               # Çin modeli
+        "jma": 0.05,               # Japonya modeli
+        "ukmo": 0.05,              # İngiltere modeli
+        "dwd_icon": 0.05,          # Almanya modeli
+        "meteofrance": 0.05        # Fransa modeli
+    })
+    
+    # === BIAS CORRECTION (NOWBot Standardı) ===
+    BIAS_CORRECTION_DAYS: int = 45  # Son 45 günün sapması hesaplanacak
+    USE_BIAS_CORRECTION: bool = True
     
     # === TARAMA AYARLARI ===
     SCAN_INTERVAL: int = field(default_factory=lambda: int(os.getenv("SCAN_INTERVAL", "240")))
@@ -35,18 +52,19 @@ class Config:
     
     # === API ENDPOINT'LERİ ===
     POLYMARKET_GAMMA_API: str = "https://gamma-api.polymarket.com"
+    POLYMARKET_CLOB_API: str = "https://clob.polymarket.com"
     OPENMETEO_BASE: str = "https://api.open-meteo.com/v1"
     
-    # === HAVA DURUMU MODELLERİ ===
+    # === HAVA DURUMU MODELLERİ (8+ MODEL - NOWBot Standardı) ===
     OPENMETEO_ENDPOINTS: Dict[str, str] = field(default_factory=lambda: {
-        "gfs": "https://api.open-meteo.com/v1/gfs",
-        "ecmwf": "https://api.open-meteo.com/v1/ecmwf",
-        "cma": "https://api.open-meteo.com/v1/cma",
-        "jma": "https://api.open-meteo.com/v1/jma",
-        "kma": "https://api.open-meteo.com/v1/kma",
-        "dwd_icon": "https://api.open-meteo.com/v1/dwd-icon",
-        "meteofrance": "https://api.open-meteo.com/v1/meteofrance",
-        "ukmo": "https://api.open-meteo.com/v1/ukmo"
+        "gfs_ensemble": "https://api.open-meteo.com/v1/gfs",     # GFS Ensemble (%45 ağırlık)
+        "ecmwf_ifs025": "https://api.open-meteo.com/v1/ecmwf",   # ECMWF IFS025 (%35 ağırlık)
+        "hrrr": "https://api.open-meteo.com/v1/hrrr",            # HRRR (%20 ağırlık)
+        "cma": "https://api.open-meteo.com/v1/cma",              # Çin modeli
+        "jma": "https://api.open-meteo.com/v1/jma",              # Japonya modeli
+        "ukmo": "https://api.open-meteo.com/v1/ukmo",            # İngiltere modeli
+        "dwd_icon": "https://api.open-meteo.com/v1/dwd-icon",    # Almanya modeli
+        "meteofrance": "https://api.open-meteo.com/v1/meteofrance"  # Fransa modeli
     })
     
     # === ŞEHİR LİSTESİ (TÜM POLYMARKET ŞEHİRLERİ - 51+ ŞEHİR) ===
@@ -164,6 +182,11 @@ class Config:
         return self.DRY_RUN
     
     @property
+    def smart_pool_amount(self) -> float:
+        """Akıllı Bahis Havuzu (%40) tutarı"""
+        return self.STARTING_CAPITAL * self.SMART_POOL_PCT
+    
+    @property
     def max_exposure_amount(self) -> float:
         """Toplam max exposure tutarı"""
         return self.STARTING_CAPITAL * self.TOTAL_EXPOSURE_PCT
@@ -177,6 +200,18 @@ class Config:
     def daily_loss_amount(self) -> float:
         """Günlük stop-loss tutarı"""
         return self.STARTING_CAPITAL * self.DAILY_LOSS_LIMIT
+    
+    def get_model_weight(self, model_name: str) -> float:
+        """Model ağırlığı getir (DEB Consensus için)"""
+        return self.MODEL_WEIGHTS.get(model_name, 0.05)  # Default %5
+    
+    def get_normalized_model_weights(self) -> Dict[str, float]:
+        """Normaliz edilmiş model ağırlıkları (toplam = 1.0)"""
+        weights = self.MODEL_WEIGHTS.copy()
+        total = sum(weights.values())
+        if total > 0:
+            return {k: v / total for k, v in weights.items()}
+        return weights
     
     def get_city_by_name(self, name: str) -> Dict:
         """Şehir bilgisi getir"""

@@ -35,7 +35,7 @@ async def run():
 
         db = get_db_session()
         saved = 0
-        for m in markets[:50]:
+        for m in markets:
             try:
                 existing = db.query(Market).filter(Market.market_id == m.get("market_id")).first()
                 if existing:

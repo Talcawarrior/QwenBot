@@ -123,7 +123,7 @@ class MarketParser:
             metric = self._extract_metric(question)
 
             if city:
-                market.city = city
+                market.city = city.title()
                 # Map city code (for ICAO compatibility)
                 from scrapers.polymarket import PolymarketScraper
                 for k, v in config.CITY_ICAO_MAP.items():

@@ -365,7 +365,7 @@
                         <td>${m.city}</td>
                         <td>${m.date ? new Date(m.date).toLocaleDateString() : '-'}</td>
                         <td><span class="badge badge-${m.outcome_type.toLowerCase()}">${m.outcome_type}</span></td>
-                        <td>${m.strike_temp}°F</td>
+                        <td>${m.strike_temp.toFixed(1)}°C</td>
                         <td>${(m.model_prob * 100).toFixed(1)}%</td>
                         <td>${m.current_yes_bid.toFixed(2)}</td>
                         <td style="color: ${m.edge > 0.03 ? '#22c55e' : m.edge < 0 ? '#ef4444' : ''}">${(m.edge * 100).toFixed(1)}%</td>

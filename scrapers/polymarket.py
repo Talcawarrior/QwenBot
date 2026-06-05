@@ -93,15 +93,38 @@ class PolymarketScraper:
         if no_price is None:
             no_price = 0.5
 
+        # Extract city name dynamically from ICAO map keys
+        city_name = "Unknown"
+        title_lower = (raw.get("title") or "").lower()
+        question_lower = (raw.get("question") or "").lower()
+        for k in config.CITY_ICAO_MAP.keys():
+            if k in title_lower or k in question_lower:
+                city_name = k.title()
+                break
+
+        if city_name == "Unknown":
+            event_title = raw.get("title") or ""
+            city_name = (
+                event_title.split(" - ")[0].strip()
+                if event_title and " - " in event_title
+                else (event_title.split()[0] if event_title else "Unknown")
+            )
+
+        # Ensure correct numeric market ID matching the betting and settlement engines
+        market_id_val = str(raw.get("id"))
+
         return {
-            "id": raw.get("condition_id") or raw.get("id"),
+            "id": market_id_val,
+            "condition_id": raw.get("condition_id"),
             "question": raw.get("question", ""),
             "yes_price": yes_price,
             "no_price": no_price,
             "volume": float(raw.get("volume", 0) or 0),
             "liquidity": float(raw.get("liquidity", 0) or 0),
             "end_date": raw.get("end_date_iso"),
-            "raw_data": json.dumps(raw)
+            "raw_data": json.dumps(raw),
+            "city_name": city_name,
+            "city": city_name
         }
 
     def fetch_and_save(self) -> int:
@@ -130,6 +153,7 @@ class PolymarketScraper:
                         existing.no_price = parsed["no_price"]
                         existing.volume = parsed["volume"]
                         existing.liquidity = parsed["liquidity"]
+                        existing.city = parsed["city"]
                         existing.last_updated = datetime.utcnow()
                         existing.raw_data = parsed["raw_data"]
                     else:
@@ -140,6 +164,7 @@ class PolymarketScraper:
                             no_price=parsed["no_price"],
                             volume=parsed["volume"],
                             liquidity=parsed["liquidity"],
+                            city=parsed["city"],
                             first_seen=datetime.utcnow(),
                             last_updated=datetime.utcnow(),
                             raw_data=parsed["raw_data"],

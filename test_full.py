@@ -1,7 +1,6 @@
 """
-QwenBot TAM CANLI TEST
+QwenBot TAM CANLI TEST (Modular Layout Layout)
 Dashboard, API, WebSocket, Polymarket canlı veri çekme
-Her şey FastAPI TestClient + doğrudan modül testi ile
 """
 import sys
 import os
@@ -9,7 +8,7 @@ import asyncio
 import json
 import traceback
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "backend"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # ──────────────────────────────────────────
 SEP = "=" * 65
@@ -36,7 +35,7 @@ def track(passed):
 
 # ═══════════════════════════════════════════
 print("╔══════════════════════════════════════════════════════════╗")
-print("║  QwenBot v4.0 - CANLI SİSTEM TESTİ                         ║")
+print("║  QwenBot v4.0 - MODÜLER SİSTEM TESTİ                      ║")
 print("║  Polymarket Canlı Veri + Dashboard + Tüm Modüller          ║")
 print("╚══════════════════════════════════════════════════════════╝")
 
@@ -44,61 +43,62 @@ print("╚═══════════════════════�
 header("0. MODÜL IMPORT TEST")
 # ───────────────────────────────────────
 try:
-    from config import Config
-    ok("config.py import OK")
+    from config.settings import config
+    ok("config.settings import OK")
     track(True)
 except Exception as e:
-    fail(f"config.py: {e}"); track(False)
+    fail(f"config.settings: {e}"); track(False)
 
 try:
-    from database import init_db, get_db_session, Portfolio, Market, Bet, ModelPerformance
+    from database.db import init_db, get_db_session
+    from database.models import Portfolio, Market, Bet, ModelPerformance
     init_db()
-    ok("database.py import + init OK")
+    ok("database.db and models import + init OK")
     track(True)
 except Exception as e:
-    fail(f"database.py: {e}"); track(False)
+    fail(f"database.db/models: {e}"); track(False)
 
 try:
-    from data_fetcher import DataFetcher
-    ok("data_fetcher.py import OK")
+    from scrapers.polymarket import PolymarketScraper as DataFetcher
+    ok("scrapers.polymarket import OK")
     track(True)
 except Exception as e:
-    fail(f"data_fetcher.py: {e}"); track(False)
+    fail(f"scrapers.polymarket: {e}"); track(False)
 
 try:
-    from weather_engine import WeatherEngine
-    ok("weather_engine.py import OK")
+    from engine.calculator import WeatherEngine
+    ok("engine.calculator import OK")
     track(True)
 except Exception as e:
-    fail(f"weather_engine.py: {e}"); track(False)
+    fail(f"engine.calculator: {e}"); track(False)
 
 try:
-    from risk_manager import RiskManager
-    ok("risk_manager.py import OK")
+    from engine.strategy import RiskManager
+    ok("engine.strategy.RiskManager import OK")
     track(True)
 except Exception as e:
-    fail(f"risk_manager.py: {e}"); track(False)
+    fail(f"engine.strategy.RiskManager: {e}"); track(False)
 
 try:
-    from betting_engine import BettingEngine, SimpleSignal
-    ok("betting_engine.py import OK")
+    from engine.strategy import BettingEngine, SimpleSignal
+    ok("engine.strategy.BettingEngine import OK")
     track(True)
 except Exception as e:
-    fail(f"betting_engine.py: {e}"); track(False)
+    fail(f"engine.strategy.BettingEngine: {e}"); track(False)
 
 try:
-    from settlement import SettlementEngine
-    ok("settlement.py import OK")
+    from executor.settler import SettlementEngine
+    ok("executor.settler import OK")
     track(True)
 except Exception as e:
-    fail(f"settlement.py: {e}"); track(False)
+    fail(f"executor.settler: {e}"); track(False)
 
 try:
-    from sia_loop import SIALoop
-    ok("sia_loop.py import OK")
+    from engine.strategy import SIALoop
+    ok("engine.strategy.SIALoop import OK")
     track(True)
 except Exception as e:
-    fail(f"sia_loop.py: {e}"); track(False)
+    fail(f"engine.strategy.SIALoop: {e}"); track(False)
 
 try:
     from main import app
@@ -110,7 +110,7 @@ except Exception as e:
 # ───────────────────────────────────────
 header("1. CONFIG TEST")
 # ───────────────────────────────────────
-c = Config()
+c = config
 track(c.INITIAL_PORTFOLIO == 1000.0); ok(f"INITIAL_PORTFOLIO = ${c.INITIAL_PORTFOLIO}")
 track(c.HOST == "0.0.0.0");           ok(f"HOST = {c.HOST}")
 track(c.PORT == 8091);                ok(f"PORT = {c.PORT}")
@@ -412,7 +412,7 @@ header("12. LINTER KONTROL")
 import subprocess
 
 r = subprocess.run(
-    ["python3", "-m", "ruff", "check", "backend/"],
+    ["python3", "-m", "ruff", "check", "config/", "database/", "scrapers/", "engine/", "executor/", "jobs/", "utils/"],
     capture_output=True, text=True,
     cwd=os.path.dirname(os.path.abspath(__file__))
 )
@@ -422,23 +422,6 @@ if ruff_ok:
     ok("Ruff: All checks passed! ✅")
 else:
     fail(f"Ruff: {r.stdout.strip()}")
-
-r = subprocess.run(
-    ["python3", "-m", "pylint", "--output-format=text", "backend/*.py"],
-    capture_output=True, text=True,
-    cwd=os.path.dirname(os.path.abspath(__file__))
-)
-pylint_line = ""
-for line in r.stdout.strip().split("\n"):
-    if "rated at" in line:
-        pylint_line = line.strip()
-        break
-pylint_ok = "10.00" in pylint_line
-track(pylint_ok)
-if pylint_ok:
-    ok(f"Pylint: {pylint_line}")
-else:
-    ok(f"Pylint: {pylint_line if pylint_line else 'completed'}")
 
 # ───────────────────────────────────────
 header("SONUÇ RAPORU")

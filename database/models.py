@@ -1,34 +1,11 @@
-"""
-Database module with SQLite WAL mode and proper JSON serialization.
-"""
+"""Database models for QwenBot."""
 
-import json
-import logging
-import os
 from datetime import datetime
 from enum import Enum as PyEnum
-
-from sqlalchemy import (
-    Column,
-    DateTime,
-    Float,
-    Integer,
-    String,
-    Text,
- create_engine,
-    event,
-)
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Session, sessionmaker
-
-from config import Config
-
-logger = logging.getLogger("DATABASE")
 
 Base = declarative_base()
-
-
-# Enums
 
 
 class BetStatus(str, PyEnum):
@@ -52,9 +29,6 @@ class MarketType(str, PyEnum):
     HIGH = "HIGH"
     LOW = "LOW"
     RANGE = "RANGE"
-
-
-# Models
 
 
 class Portfolio(Base):
@@ -84,7 +58,7 @@ class Market(Base):
     question = Column(String)
     city_code = Column(String, default="")
     city_name = Column(String)
-    city = Column(String)  # for compatibility with main.py bet.city etc
+    city = Column(String)  # for compatibility
     country = Column(String)
     latitude = Column(Float)
     longitude = Column(Float)
@@ -126,9 +100,7 @@ class Bet(Base):
     bet_type = Column(String)  # YES/NO or HIGH/LOW
     side = Column(String)  # YES/NO/HIGH/LOW
     realized_pnl = Column(Float, default=0.0)
-    status = Column(
-        String, default="open"
-    )  # open, won, lost, cancelled, active, settled
+    status = Column(String, default="open")  # open, won, lost, cancelled, active, settled
     ladder_data = Column(Text)  # JSON serialized
     result_data = Column(Text)  # JSON serialized
     placed_at = Column(DateTime, default=datetime.utcnow)
@@ -149,75 +121,3 @@ class ModelPerformance(Base):
     weight = Column(Float, default=0.0)
     last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     recorded_at = Column(DateTime, default=datetime.utcnow)
-
-
-# Database setup with WAL mode - use Config for absolute path + dir create
-DB_PATH = Config.DB_PATH
-
-
-def get_engine():
-    """Create engine with WAL mode enabled."""
-    # Ensure data dir exists (fix relative path startup crash)
-    db_dir = os.path.dirname(DB_PATH)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
-
-    eng = create_engine(
-        f"sqlite:///{DB_PATH}",
-        connect_args={"check_same_thread": False},
-        pool_pre_ping=True,
-        echo=Config.DB_ECHO,
-    )
-
-    @event.listens_for(eng, "connect")
-    def set_sqlite_pragma(dbapi_connection, _connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA cache_size=10000")
-        cursor.close()
-
-    return eng
-
-
-engine = get_engine()
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)  # pylint: disable=invalid-name
-
-
-def init_db():
-    """Initialize database tables."""
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database initialized at %s with WAL mode", DB_PATH)
-
-
-def get_db_session() -> Session:
-    """Get a new database session."""
-    return SessionLocal()
-
-
-def get_db_session_factory():
-    """Return the SessionLocal factory for per-task session creation."""
-    return SessionLocal
-
-
-def close_db_session(session: Session):
-    """Close database session."""
-    session.close()
-
-
-# Helper functions for JSON serialization
-def serialize_json(data) -> str:
-    """Serialize Python object to JSON string."""
-    if data is None:
-        return "{}"
-    return json.dumps(data)
-
-
-def deserialize_json(json_str: str):
-    """Deserialize JSON string to Python object."""
-    if not json_str:
-        return {}
-    try:
-        return json.loads(json_str)
-    except json.JSONDecodeError:
-        return {}

@@ -1,26 +1,18 @@
-"""
-DATA FETCHER MODULE - POLYMARKET ULTIMATE HYBRID WEATHER BOT
-- Polymarket Gamma API + Nested Market Parsing
-- Fix: proper null handling for bestBid/bestAsk
-- Fix: session close on shutdown
-- Fix: logging instead of bare print/except
-"""
+"""Polymarket scraper module."""
 
-import asyncio
 import logging
 import re
 from datetime import datetime
 from typing import Dict, List, Optional
-
 import aiohttp
+from config.settings import config
 
-from config import config
-
-logger = logging.getLogger("DATA_FETCHER")
+logger = logging.getLogger("SCRAPER_POLYMARKET")
 
 
-class DataFetcher:
-    """Fetch market and weather data from external APIs."""
+class PolymarketScraper:
+    """Scrapes weather-related events from Polymarket."""
+
     def __init__(self):
         self.session: Optional[aiohttp.ClientSession] = None
         self.base_url = config.POLYMARKET_GAMMA_API
@@ -38,30 +30,22 @@ class DataFetcher:
         if self.session and not self.session.closed:
             await self.session.close()
 
-    # pylint: disable=too-many-locals
     async def fetch_polymarket_events(self, limit: int = 100) -> List[Dict]:
-        """
-        Polymarket'ten tum daily-temperature eventlerini cek
-        Nested market yapisi dogru parse ediliyor
-        """
+        """Fetch daily-temperature events from Polymarket."""
         await self.init_session()
-
         try:
             url = f"{self.base_url}/events?tag_slug=daily-temperature&closed=false&limit={limit}"
-
             async with self.session.get(url) as response:
                 if response.status != 200:
                     logger.warning("Polymarket API error: %s", response.status)
                     return []
 
                 data = await response.json()
-
                 if not isinstance(data, list):
                     logger.warning("Invalid API response format")
                     return []
 
                 all_markets = []
-
                 for event in data:
                     event_id = event.get("id", "")
                     event_title = event.get("title", "")
@@ -73,11 +57,10 @@ class DataFetcher:
                             resolution_date = datetime.fromisoformat(
                                 event_end_date.replace("Z", "+00:00")
                             )
-                        except Exception:  # pylint: disable=broad-exception-caught
+                        except Exception:
                             pass
 
                     markets = event.get("markets", [])
-
                     if not markets:
                         continue
 
@@ -85,7 +68,6 @@ class DataFetcher:
                         market_id = market.get("id") or ""
                         question = market.get("question", "")
 
-                        # Safe null handling for bestBid/bestAsk
                         best_bid = market.get("bestBid")
                         best_ask = market.get("bestAsk")
 
@@ -133,36 +115,30 @@ class DataFetcher:
                             "volume": market.get("volume", 0.0),
                             "is_active": True,
                         }
-
                         all_markets.append(market_data)
 
                 logger.info(
                     "Fetched %d markets from %d events", len(all_markets), len(data)
                 )
                 return all_markets
-
-        except Exception:  # pylint: disable=broad-exception-caught
+        except Exception:
             logger.exception("Error fetching Polymarket data")
             return []
 
     def _extract_city(self, text: str) -> str:
-        """Soru metninden sehir adi cikar ve ICAO koduna cevir"""
+        """Extract city and map to ICAO code."""
         if not text:
             return ""
-
         text_lower = text.lower()
-
         for city_name, icao_code in config.CITY_ICAO_MAP.items():
             if city_name in text_lower:
                 return icao_code
-
         return ""
 
     def _extract_strike(self, question: str) -> float:
-        """Sorudan strike sicakligi cikar"""
+        """Extract strike temperature."""
         if not question:
             return 0.0
-
         patterns = [
             r"(\d+)\s*\°\s*C",
             r"(\d+)\s*\°\s*F",
@@ -171,26 +147,21 @@ class DataFetcher:
             r"below\s+(\d+)",
             r"be\s+(\d+)\s*\°?",
         ]
-
         for pattern in patterns:
             match = re.search(pattern, question, re.IGNORECASE)
             if match:
                 try:
                     strike = float(match.group(1))
-
                     if "F" in question.upper() or "FAHRENHEIT" in question.upper():
                         strike = (strike - 32) * 5 / 9
-
                     return round(strike, 1)
                 except ValueError:
                     continue
-
         return 0.0
 
     def _determine_market_type(self, question: str) -> str:
-        """Market tipini belirle: HIGH, LOW, veya RANGE"""
+        """Determine market type (HIGH/LOW/RANGE)."""
         question_lower = question.lower()
-
         if (
             "above" in question_lower
             or "higher" in question_lower
@@ -208,49 +179,10 @@ class DataFetcher:
                 return "LOW"
             if "or higher" in question_lower:
                 return "HIGH"
-
         return "RANGE"
 
-    async def fetch_weather_data(self, city_code: str) -> Optional[Dict]:
-        """Open-Meteo'dan hava durumu verisi cek"""
-        if not city_code:
-            return None
-
-        await self.init_session()
-
-        coords = self._get_city_coords(city_code)
-        if not coords:
-            return None
-
-        lat, lon = coords
-
-        try:
-            url = f"{config.OPEN_METEO_BASE}"
-            params = {
-                "latitude": lat,
-                "longitude": lon,
-                "hourly": "temperature_2m",
-                "forecast_days": 7,
-                "timezone": "auto",
-            }
-
-            async with self.session.get(url, params=params) as response:
-                if response.status == 429:
-                    logger.warning("Rate limit exceeded for %s", city_code)
-                    return None
-
-                if response.status != 200:
-                    return None
-
-                data = await response.json()
-                return data
-
-        except Exception:  # pylint: disable=broad-exception-caught
-            logger.exception("Weather API error for %s", city_code)
-            return None
-
     def _get_city_coords(self, city_code: str) -> Optional[tuple]:
-        """ICAO kodundan koordinat bul"""
+        """Get city coordinates from ICAO code."""
         coords_map = {
             "KDAL": (32.8471, -96.8517),
             "KMIA": (25.7959, -80.2870),
@@ -290,35 +222,8 @@ class DataFetcher:
             "LIRF": (41.8003, 12.2389),
             "LEBL": (41.2974, 2.0833),
         }
-
         return coords_map.get(city_code)
 
     def get_city_coords(self, city_code: str) -> Optional[tuple]:
-        """Public accessor for city coordinates (used by main.py for forecast)"""
+        """Public accessor for city coordinates."""
         return self._get_city_coords(city_code)
-
-
-if __name__ == "__main__":
-
-    async def test():
-        """Run DataFetcher integration test."""
-        df = DataFetcher()
-
-        print("=== TESTING DATA FETCHER ===")
-        print("\n1. Fetching Polymarket events...")
-        markets = await df.fetch_polymarket_events(limit=10)
-
-        if markets:
-            print(f"\nFound {len(markets)} markets")
-            print("\nFirst 3 markets:")
-            for i, m in enumerate(markets[:3]):
-                print(f"\n{i + 1}. {m['question']}")
-                print(f"   City: {m['city_code']}")
-                print(f"   Strike: {m['strike_temp']}C")
-                print(f"   Type: {m['market_type']}")
-                print(f"   Resolution: {m['resolution_date']}")
-                print(f"   Yes Price: {m['yes_price']:.3f}")
-
-        await df.close_session()
-
-    asyncio.run(test())

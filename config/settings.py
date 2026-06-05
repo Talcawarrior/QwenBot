@@ -3,10 +3,10 @@
 import os
 from dotenv import load_dotenv
 
-# Compute repo root (parent of backend/)
+# Compute repo root (parent of config/)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Load .env from repo root (not cwd dependent)
+# Load .env from repo root
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 
@@ -111,7 +111,7 @@ class Config:
 
     # Dinamik hesaplanmalı (INITIAL * DAILY_LOSS_LIMIT), ama backward için property
     @property
-    def daily_loss_limit_amount(self):  # pylint: disable=missing-function-docstring
+    def daily_loss_limit_amount(self):
         """Return absolute daily loss limit amount."""
         return self.INITIAL_PORTFOLIO * self.DAILY_LOSS_LIMIT
 
@@ -146,5 +146,5 @@ class Config:
         return portfolio_value * cls.DAILY_LOSS_LIMIT
 
 
-# Singleton instance for backward compatibility
+# Singleton instance
 config = Config()

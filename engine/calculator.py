@@ -1,19 +1,14 @@
-"""
-Weather Engine with 8+ Model Ensemble and proper Celsius handling.
-Fix: session_factory pattern instead of fixed session
-"""
+"""Matematiksel formül ve olasılık hesabı (Normal Dağılım CDF)."""
 
-import logging
 import asyncio
-from typing import Optional, Dict
+import logging
+from typing import Dict, Optional
 from datetime import datetime, timezone
 import aiohttp
-from config import Config
+from config.settings import config, Config
 
 logger = logging.getLogger("WEATHER_ENGINE")
 
-# Map internal model weight keys to Open-Meteo API model identifiers (BUG 4)
-# Verified against live Open-Meteo API on 2026-06-05
 OPEN_METEO_MODEL_MAP = {
     "gfs_seamless": "gfs025",
     "ecmwf_ifs04": "ecmwf_ifs025",
@@ -25,31 +20,24 @@ OPEN_METEO_MODEL_MAP = {
     "meteofrance_seamless": "meteofrance_seamless",
 }
 
-# Reverse map for parsing API responses back to internal names
 OPEN_METEO_MODEL_REVERSE = {v: k for k, v in OPEN_METEO_MODEL_MAP.items()}
 
 try:
     from scipy.stats import norm
-
     HAS_SCIPY = True
 except ImportError:
     HAS_SCIPY = False
-    logger.warning(
-        "scipy not available, using Abramowitz & Stegun approximation for Normal CDF"
-    )
+    logger.warning("scipy not available, using Abramowitz & Stegun approximation for Normal CDF")
 
 
 class WeatherEngine:
     """Multi-model ensemble weather forecast engine."""
-    def __init__(self, db_session_factory=None, config=None):
+
+    def __init__(self, db_session_factory=None, cfg=None):
         self.db_session_factory = db_session_factory
-        self.config = config or Config()
+        self.config = cfg or config
         self.session: Optional[aiohttp.ClientSession] = None
-        self.model_weights = (
-            self.config.get_normalized_weights()
-            if hasattr(self.config, "get_normalized_weights")
-            else Config.get_normalized_weights()
-        )
+        self.model_weights = self.config.get_normalized_weights()
 
     async def start(self):
         """Initialize HTTP session."""
@@ -64,7 +52,6 @@ class WeatherEngine:
             self.session = None
             logger.info("WeatherEngine HTTP session stopped")
 
-    # pylint: disable=too-many-locals,too-many-return-statements,too-many-branches
     async def get_multi_model_forecast(
         self,
         city_code: str,
@@ -72,10 +59,7 @@ class WeatherEngine:
         longitude: float,
         target_date: Optional[datetime] = None,
     ) -> Optional[Dict]:
-        """
-        Get multi-model ensemble forecast for a specific location.
-        Returns weighted consensus probability and statistics.
-        """
+        """Get multi-model ensemble forecast for a specific location."""
         if not city_code or (latitude == 0 and longitude == 0):
             logger.warning(
                 "Invalid location: city_code=%s, lat=%s, lon=%s",
@@ -117,7 +101,6 @@ class WeatherEngine:
                     return None
 
                 data = await resp.json()
-
                 model_temps = {}
                 daily_data = data.get("daily", {})
 
@@ -153,17 +136,12 @@ class WeatherEngine:
         except asyncio.TimeoutError:
             logger.error("Timeout fetching weather for %s", city_code)
             return None
-        except Exception:  # pylint: disable=broad-exception-caught
+        except Exception:
             logger.exception("Error fetching weather for %s", city_code)
             return None
 
-    def _calculate_deb_consensus(
-        self, model_temps: Dict[str, float], _target_date: datetime
-    ) -> Dict:
-        """
-        Calculate DEB (Deterministic Ensemble Blend) Consensus.
-        Uses Normal CDF for probability calculation.
-        """
+    def _calculate_deb_consensus(self, model_temps: Dict[str, float], _target_date: datetime) -> Dict:
+        """Calculate DEB (Deterministic Ensemble Blend) Consensus."""
         if not model_temps:
             return None
 
@@ -210,7 +188,6 @@ class WeatherEngine:
 
         mean = consensus["weighted_mean"]
         std = consensus["weighted_std"]
-
         z = (strike_temp - mean) / std
 
         if HAS_SCIPY:
@@ -265,7 +242,6 @@ class WeatherEngine:
             * poly
         )
 
-    # Alias for API compatibility
     async def get_forecast(
         self,
         city_code: str,

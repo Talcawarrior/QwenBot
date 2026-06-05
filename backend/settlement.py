@@ -209,31 +209,36 @@ class SettlementEngine:
             settled_count = 0
             now = datetime.utcnow()
             for bet in active_bets:
-                market = self._get_market_for_bet(bet)
-                if not market or not market.resolution_date:
-                    continue
-                if market.resolution_date > now:
-                    continue  # not yet resolved (BUG-10)
-                actual_temp = await self._get_actual_temperature(bet)
-                if actual_temp is None:
-                    continue
-                result = self.settle_bet(bet, actual_temp)
-                # Portfolio güncelle
-                portfolio = self.db.query(Portfolio).filter(Portfolio.id == 1).first()
-                if portfolio:
-                    is_win = result["status"] == "won"
-                    self.update_portfolio_after_settlement(
-                        portfolio, result["realized_pnl"], is_win
+                try:
+                    market = self._get_market_for_bet(bet)
+                    if not market or not market.resolution_date:
+                        continue
+                    if market.resolution_date > now:
+                        continue  # not yet resolved (BUG-10)
+                    actual_temp = await self._get_actual_temperature(bet)
+                    if actual_temp is None:
+                        continue
+                    result = self.settle_bet(bet, actual_temp)
+                    # Portfolio güncelle
+                    portfolio = self.db.query(Portfolio).filter(Portfolio.id == 1).first()
+                    if portfolio:
+                        is_win = result["status"] == "won"
+                        self.update_portfolio_after_settlement(
+                            portfolio, result["realized_pnl"], is_win
+                        )
+                    self.db.commit()
+                    settled_count += 1
+                    logger.info(
+                        "[SETTLED] %s @ %.1fC -> %s PnL=$%.2f",
+                        bet.city or bet.city_code,
+                        actual_temp,
+                        result["status"],
+                        result["realized_pnl"],
                     )
-                self.db.commit()
-                settled_count += 1
-                logger.info(
-                    "[SETTLED] %s @ %.1fC -> %s PnL=$%.2f",
-                    bet.city or bet.city_code,
-                    actual_temp,
-                    result["status"],
-                    result["realized_pnl"],
-                )
+                except Exception as e:
+                    logger.error("Error settling bet %s: %s", bet.id, e, exc_info=True)
+                    if self.db:
+                        self.db.rollback()
             return settled_count
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Settlement error: %s", e)

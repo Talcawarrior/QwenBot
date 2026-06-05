@@ -654,98 +654,101 @@ async def scan_loop():
 
                 # 2. Her market için analiz yap
                 for market_data in markets_data[:10]:
-                    # Fetch forecast using coords from data_fetcher
-                    city_code = market_data.get("city_code", "")
-                    coords = (
-                        state.data_fetcher.get_city_coords(city_code)
-                        if hasattr(state.data_fetcher, "get_city_coords")
-                        else None
-                    )
-                    lat = coords[0] if coords else 0.0
-                    lon = coords[1] if coords else 0.0
-                    target_date = market_data.get("resolution_date")
-                    forecast = None
-                    if city_code and lat and lon:
-                        try:
-                            forecast = (
-                                await state.weather_engine.get_multi_model_forecast(
-                                    city_code, lat, lon, target_date
-                                )
-                            )
-                        except Exception as e:  # pylint: disable=broad-exception-caught
-                            logger.error("Forecast error for %s: %s", city_code, e)
-
-                    # Market objesi oluştur (use Market directly)
-                    market = Market(
-                        market_id=market_data.get("market_id", ""),
-                        event_id=market_data.get("event_id", market_data.get("id", "")),
-                        city=market_data.get("city", "Unknown"),
-                        city_code=city_code,
-                        outcome_type=market_data.get("outcome_type", "YES"),
-                        strike_temp=market_data.get("strike_temp", 80),
-                        date=(
-                            target_date if isinstance(target_date, datetime) else None
-                        ),
-                        resolution_date=(
-                            target_date if isinstance(target_date, datetime) else None
-                        ),
-                        current_yes_bid=market_data.get(
-                            "current_yes_bid",
-                            market_data.get("yes_price", 0.5),
-                        ),
-                        current_no_bid=market_data.get(
-                            "current_no_bid",
-                            market_data.get("no_price", 0.5),
-                        ),
-                        latitude=lat,
-                        longitude=lon,
-                    )
-
-                    # Analiz et (now passes forecast)
-                    signal = await state.betting_engine.analyze_market(
-                        market, portfolio_value, forecast
-                    )
-
-                    if signal:
-                        cc = getattr(signal, "city_code", "") or market_data.get(
-                            "city_code", ""
+                    try:
+                        # Fetch forecast using coords from data_fetcher
+                        city_code = market_data.get("city_code", "")
+                        coords = (
+                            state.data_fetcher.get_city_coords(city_code)
+                            if hasattr(state.data_fetcher, "get_city_coords")
+                            else None
                         )
-                        if not state.risk_manager.check_city_cap(cc):
-                            continue
-                        state.total_signals += 1
-
-                        # Ladder bilgisi varsa logla
-                        if signal.ladder_orders:
-                            logger.info("LADDER: %d levels", len(signal.ladder_orders))
-
-                        # Create a fresh session for the bet insert
-                        bet_db = state.db_session_factory()
-                        prev_db = state.betting_engine.db
-                        try:
-                            state.betting_engine.db = bet_db
-                            bet = await state.betting_engine.execute_signal(
-                                signal, market
-                            )
-                            if bet:
-                                state.total_bets += 1
-                                await broadcast_message(
-                                    {
-                                        "type": "new_bet",
-                                        "data": {
-                                            "id": bet.id,
-                                            "city": bet.city,
-                                            "outcome": getattr(bet, "outcome", "YES"),
-                                            "stake": getattr(bet, "stake_amount", 0),
-                                            "edge": getattr(signal, "edge", 0),
-                                            "ladder": bool(
-                                                getattr(signal, "ladder_orders", [])
-                                            ),
-                                        },
-                                    }
+                        lat = coords[0] if coords else 0.0
+                        lon = coords[1] if coords else 0.0
+                        target_date = market_data.get("resolution_date")
+                        forecast = None
+                        if city_code and lat and lon:
+                            try:
+                                forecast = (
+                                    await state.weather_engine.get_multi_model_forecast(
+                                        city_code, lat, lon, target_date
+                                    )
                                 )
-                        finally:
-                            state.betting_engine.db = prev_db
-                            bet_db.close()
+                            except Exception as e:  # pylint: disable=broad-exception-caught
+                                logger.error("Forecast error for %s: %s", city_code, e)
+
+                        # Market objesi oluştur (use Market directly)
+                        market = Market(
+                            market_id=market_data.get("market_id", ""),
+                            event_id=market_data.get("event_id", market_data.get("id", "")),
+                            city=market_data.get("city", "Unknown"),
+                            city_code=city_code,
+                            outcome_type=market_data.get("outcome_type", "YES"),
+                            strike_temp=market_data.get("strike_temp", 80),
+                            date=(
+                                target_date if isinstance(target_date, datetime) else None
+                            ),
+                            resolution_date=(
+                                target_date if isinstance(target_date, datetime) else None
+                            ),
+                            current_yes_bid=market_data.get(
+                                "current_yes_bid",
+                                market_data.get("yes_price", 0.5),
+                            ),
+                            current_no_bid=market_data.get(
+                                "current_no_bid",
+                                market_data.get("no_price", 0.5),
+                            ),
+                            latitude=lat,
+                            longitude=lon,
+                        )
+
+                        # Analiz et (now passes forecast)
+                        signal = await state.betting_engine.analyze_market(
+                            market, portfolio_value, forecast
+                        )
+
+                        if signal:
+                            cc = getattr(signal, "city_code", "") or market_data.get(
+                                "city_code", ""
+                            )
+                            if not state.risk_manager.check_city_cap(cc):
+                                continue
+                            state.total_signals += 1
+
+                            # Ladder bilgisi varsa logla
+                            if signal.ladder_orders:
+                                logger.info("LADDER: %d levels", len(signal.ladder_orders))
+
+                            # Create a fresh session for the bet insert
+                            bet_db = state.db_session_factory()
+                            prev_db = state.betting_engine.db
+                            try:
+                                state.betting_engine.db = bet_db
+                                bet = await state.betting_engine.execute_signal(
+                                    signal, market
+                                )
+                                if bet:
+                                    state.total_bets += 1
+                                    await broadcast_message(
+                                        {
+                                            "type": "new_bet",
+                                            "data": {
+                                                "id": bet.id,
+                                                "city": bet.city,
+                                                "outcome": getattr(bet, "outcome", "YES"),
+                                                "stake": getattr(bet, "stake_amount", 0),
+                                                "edge": getattr(signal, "edge", 0),
+                                                "ladder": bool(
+                                                    getattr(signal, "ladder_orders", [])
+                                                ),
+                                            },
+                                        }
+                                    )
+                            finally:
+                                state.betting_engine.db = prev_db
+                                bet_db.close()
+                    except Exception as e:
+                        logger.error("Error processing market %s: %s", market_data.get("city", "Unknown"), e, exc_info=True)
 
                 state.last_scan = datetime.now()
 

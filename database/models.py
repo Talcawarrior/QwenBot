@@ -1,38 +1,159 @@
-"""Database models for QwenBot."""
+"""Database models for QwenBot based on state machine architecture."""
 
+import enum
 from datetime import datetime
-from enum import Enum as PyEnum
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text
+from sqlalchemy import Column, String, Float, DateTime, Boolean, Integer, Text
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
 
 
-class BetStatus(str, PyEnum):
-    """Status enum for bet lifecycle."""
+class MarketStatus(enum.Enum):
+    """Lifecycle status of a weather market."""
     OPEN = "open"
-    ACTIVE = "active"
+    BET_PLACED = "bet_placed"
+    SETTLED_WIN = "settled_win"
+    SETTLED_LOSS = "settled_loss"
+    EXPIRED = "expired"
+    ERROR = "error"
+
+
+class BetStatus(enum.Enum):
+    """Execution status of a bet."""
+    PENDING = "pending"
+    PLACED = "placed"
+    FAILED = "failed"
     WON = "won"
     LOST = "lost"
-    SETTLED = "settled"
-    CANCELLED = "cancelled"
 
 
-class Outcome(str, PyEnum):
-    """Outcome enum for bet direction."""
-    YES = "YES"
-    NO = "NO"
+class WeatherMarket(Base):
+    """Polymarket'ten çekilen açık hava betleri."""
+    __tablename__ = "weather_markets"
+
+    id = Column(String, primary_key=True)               # Polymarket market ID or condition ID
+    question = Column(String, nullable=False)           # "Will NYC temp exceed 95°F on July 4?"
+
+    # Parse edilmiş bilgiler
+    city = Column(String)                               # "New York"
+    city_code = Column(String, default="")              # ICAO/city code
+    metric = Column(String)                             # "temperature_max"
+    threshold = Column(Float)                           # 95.0
+    threshold_unit = Column(String)                     # "fahrenheit" or "celsius"
+    target_date = Column(DateTime)                      # 2025-07-04
+    latitude = Column(Float)                            # Latitude
+    longitude = Column(Float)                           # Longitude
+
+    # Polymarket fiyatları
+    yes_price = Column(Float)                           # 0.35
+    no_price = Column(Float)                            # 0.65
+    volume = Column(Float)                              # $50,000
+    liquidity = Column(Float)                           # Liquidity
+
+    # Durum
+    status = Column(String, default=MarketStatus.OPEN.value)
+
+    # Meta
+    first_seen = Column(DateTime, default=datetime.utcnow)
+    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    raw_data = Column(Text)                             # JSON string - ham veri
 
 
-class MarketType(str, PyEnum):
-    """Market type enum for classification."""
-    HIGH = "HIGH"
-    LOW = "LOW"
-    RANGE = "RANGE"
+class WeatherForecast(Base):
+    """Meteoroloji API'lerinden çekilen tahminler."""
+    __tablename__ = "weather_forecasts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    market_id = Column(String)                          # Hangi market için
+
+    # Konum
+    city = Column(String)
+    lat = Column(Float)
+    lon = Column(Float)
+
+    # Tahmin
+    target_date = Column(DateTime)
+    metric = Column(String)                             # "temperature_max"
+
+    # Farklı kaynaklardan gelen değerler
+    source = Column(String)                             # "openmeteo", "weatherapi", "accuweather"
+    predicted_value = Column(Float)                     # 92.5
+    confidence = Column(Float)                          # Varsa
+
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+    raw_data = Column(Text)
+
+
+class Analysis(Base):
+    """Analiz sonuçları."""
+    __tablename__ = "analyses"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    market_id = Column(String)
+
+    # Hesaplanan değerler
+    estimated_probability = Column(Float)               # 0.72 (gerçek olasılık tahmini)
+    market_implied_prob = Column(Float)                 # 0.35 (Polymarket'in fiyatı)
+    edge = Column(Float)                                # 0.37 (fark)
+
+    # Kaynak detayları
+    avg_forecast_value = Column(Float)                  # Ortalama tahmin: 92.5°F
+    std_forecast_value = Column(Float)                  # Standart sapma
+    num_sources = Column(Integer)                       # Kaç kaynakta veri var
+
+    # Karar
+    recommended_side = Column(String)                   # "YES" veya "NO"
+    recommended_amount = Column(Float)                  # Kelly criterion sonucu
+    confidence_score = Column(Float)                    # 0-1
+
+    should_bet = Column(Boolean, default=False)         # Bet açılmalı mı?
+    reason = Column(String)                             # Neden evet/hayır
+
+    analyzed_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Bet(Base):
+    """Açılan betler."""
+    __tablename__ = "bets"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    market_id = Column(String, nullable=False)
+    analysis_id = Column(Integer)
+
+    city_code = Column(String)
+    city = Column(String)                               # compatibility
+    outcome = Column(String)                            # "YES" or "NO"
+    stake = Column(Float)
+    stake_amount = Column(Float, default=0.0)
+    entry_price = Column(Float)
+    shares = Column(Float)
+    current_price = Column(Float, default=0.5)
+    pnl = Column(Float, default=0.0)
+    unrealized_pnl = Column(Float, default=0.0)
+    fair_value = Column(Float, default=0.0)
+    expected_value = Column(Float, default=0.0)
+    strike_temp = Column(Float)
+    bet_type = Column(String)                           # YES/NO or HIGH/LOW
+    side = Column(String)                               # YES/NO/HIGH/LOW
+    realized_pnl = Column(Float, default=0.0)
+    status = Column(String, default="open")             # open, won, lost, cancelled, active, settled
+    ladder_data = Column(Text)                          # JSON serialized
+    result_data = Column(Text)                          # JSON serialized
+
+    # Blueprint Specific properties
+    amount = Column(Float)                              # $50
+    price = Column(Float)                               # 0.35
+    potential_payout = Column(Float)                    # $142.86
+    order_id = Column(String)
+    tx_hash = Column(String)
+    error_message = Column(String)                      # Hata varsa
+
+    placed_at = Column(DateTime, default=datetime.utcnow)
+    settled_at = Column(DateTime)
 
 
 class Portfolio(Base):
-    """Portfolio model tracking overall financial state."""
+    """Portfolio state for tracking balances (integrated to match existing QwenBot frontend)."""
     __tablename__ = "portfolio"
 
     id = Column(Integer, primary_key=True)
@@ -45,66 +166,6 @@ class Portfolio(Base):
     total_lost = Column(Integer, default=0)
     daily_pnl = Column(Float, default=0.0)
     last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-class Market(Base):
-    """Market model for weather prediction markets."""
-    __tablename__ = "markets"
-
-    id = Column(Integer, primary_key=True)
-    market_id = Column(String, unique=True, nullable=False)
-    event_id = Column(String, nullable=False)
-    title = Column(String)
-    question = Column(String)
-    city_code = Column(String, default="")
-    city_name = Column(String)
-    city = Column(String)  # for compatibility
-    country = Column(String)
-    latitude = Column(Float)
-    longitude = Column(Float)
-    strike_temp = Column(Float)
-    threshold_type = Column(String)  # "above", "below", "or_below", "or_above"
-    range_type = Column(String)  # "HIGH", "LOW", "RANGE"
-    resolution_date = Column(DateTime)
-    date = Column(DateTime)  # compatibility
-    outcome_type = Column(String)  # "YES" or "NO"
-    yes_price = Column(Float, default=0.5)
-    no_price = Column(Float, default=0.5)
-    current_yes_bid = Column(Float, default=0.5)
-    current_no_bid = Column(Float, default=0.5)
-    volume = Column(Float, default=0.0)
-    status = Column(String, default="active")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-class Bet(Base):
-    """Bet model for individual positions."""
-    __tablename__ = "bets"
-
-    id = Column(Integer, primary_key=True)
-    market_id = Column(String, nullable=False)
-    city_code = Column(String)
-    city = Column(String)  # compatibility
-    outcome = Column(String)  # "YES" or "NO"
-    stake = Column(Float)
-    stake_amount = Column(Float, default=0.0)
-    entry_price = Column(Float)
-    shares = Column(Float)
-    current_price = Column(Float, default=0.5)
-    pnl = Column(Float, default=0.0)
-    unrealized_pnl = Column(Float, default=0.0)
-    fair_value = Column(Float, default=0.0)
-    expected_value = Column(Float, default=0.0)
-    strike_temp = Column(Float)
-    bet_type = Column(String)  # YES/NO or HIGH/LOW
-    side = Column(String)  # YES/NO/HIGH/LOW
-    realized_pnl = Column(Float, default=0.0)
-    status = Column(String, default="open")  # open, won, lost, cancelled, active, settled
-    ladder_data = Column(Text)  # JSON serialized
-    result_data = Column(Text)  # JSON serialized
-    placed_at = Column(DateTime, default=datetime.utcnow)
-    settled_at = Column(DateTime, nullable=True)
 
 
 class ModelPerformance(Base):
@@ -121,3 +182,7 @@ class ModelPerformance(Base):
     weight = Column(Float, default=0.0)
     last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     recorded_at = Column(DateTime, default=datetime.utcnow)
+
+
+# Compatibility Aliases
+Market = WeatherMarket

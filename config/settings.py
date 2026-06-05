@@ -1,6 +1,7 @@
-"""PolyMarket Ultimate Hybrid Weather Bot - Configuration"""
+"""PolyMarket Ultimate Hybrid Weather Bot - Configuration Dataclasses & Legacy Config."""
 
 import os
+from dataclasses import dataclass
 from dotenv import load_dotenv
 
 # Compute repo root (parent of config/)
@@ -18,21 +19,58 @@ def _resolve_path(path_value: str, default_relative: str) -> str:
     return os.path.join(BASE_DIR, raw)
 
 
-_model_weights = {
-    "gfs_seamless": 0.30,
-    "ecmwf_ifs04": 0.25,
-    "gem_seamless": 0.15,
-    "icon_seamless": 0.10,
-    "jma_msm": 0.08,
-    "cma_grapes_global": 0.05,
-    "ukmo_seamless": 0.04,
-    "meteofrance_seamless": 0.03,
-}
-_total_weight = sum(_model_weights.values())
-if abs(_total_weight - 1.0) > 0.001:
-    _model_weights = {k: v / _total_weight for k, v in _model_weights.items()}
+@dataclass
+class PolymarketConfig:
+    """Polymarket specific configurations."""
+    api_url: str = "https://clob.polymarket.com"
+    gamma_url: str = "https://gamma-api.polymarket.com"
+    private_key: str = os.getenv("POLY_PRIVATE_KEY", "")
+    api_key: str = os.getenv("POLY_API_KEY", "")
+    api_secret: str = os.getenv("POLY_API_SECRET", "")
+    api_passphrase: str = os.getenv("POLY_API_PASSPHRASE", "")
+    weather_keywords: list = None
+
+    def __post_init__(self):
+        self.weather_keywords = [
+            "temperature", "heat", "cold", "snow", "rain",
+            "hurricane", "storm", "weather", "°F", "°C",
+            "celsius", "fahrenheit", "precipitation", "highest"
+        ]
 
 
+@dataclass
+class MeteoConfig:
+    """Weather service API configurations."""
+    openmeteo_url: str = "https://api.open-meteo.com/v1/forecast"
+    weatherapi_key: str = os.getenv("WEATHERAPI_KEY", "")
+    weatherapi_url: str = "https://api.weatherapi.com/v1"
+
+
+@dataclass
+class StrategyConfig:
+    """Strategy & bankroll metrics."""
+    min_edge: float = 0.03          # Minimum edge (aligned with QwenBot 3%)
+    max_bet_amount: float = 50.0    # Maximum $50 per bet
+    min_liquidity: float = 1000.0   # Minimum $1000 liquidity
+    kelly_fraction: float = 0.15    # Quarter/Fractional Kelly (aligned with QwenBot 15%)
+    min_sources: int = 1            # En az 1 hava kaynağı (aligned for Open-Meteo free tier)
+    max_days_ahead: int = 14        # 14 günden fazla ileriyi oynama
+
+
+@dataclass
+class BotConfig:
+    """Combined configurations."""
+    polymarket: PolymarketConfig = None
+    meteo: MeteoConfig = None
+    strategy: StrategyConfig = None
+
+    def __post_init__(self):
+        self.polymarket = self.polymarket or PolymarketConfig()
+        self.meteo = self.meteo or MeteoConfig()
+        self.strategy = self.strategy or StrategyConfig()
+
+
+# Main configuration class (kept for backward compatibility with older components & tests)
 class Config:
     """Central configuration for the PolyMarket Weather Bot."""
 
@@ -50,7 +88,17 @@ class Config:
     POLYMARKET_GAMMA_API = "https://gamma-api.polymarket.com"
     POLYMARKET_CLOB_API = "https://clob.polymarket.com"
     OPEN_METEO_API = "https://api.open-meteo.com/v1"
-    MODEL_WEIGHTS = _model_weights
+    
+    MODEL_WEIGHTS = {
+        "gfs_seamless": 0.30,
+        "ecmwf_ifs04": 0.25,
+        "gem_seamless": 0.15,
+        "icon_seamless": 0.10,
+        "jma_msm": 0.08,
+        "cma_grapes_global": 0.05,
+        "ukmo_seamless": 0.04,
+        "meteofrance_seamless": 0.03,
+    }
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
     LOG_FILE = _resolve_path(os.getenv("LOG_FILE"), "logs/bot.log")
     LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)-15s | %(message)s"
@@ -59,11 +107,9 @@ class Config:
     TEMP_UNIT = "celsius"
     DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 
-    # HOST and PORT for uvicorn
     HOST = os.getenv("HOST", "0.0.0.0")
     PORT = int(os.getenv("PORT", "8091"))
 
-    # Missing attributes from bug reports - added for compatibility
     CITY_ICAO_MAP = {
         "ankara": "LTAC",
         "istanbul": "LTFM",
@@ -109,7 +155,6 @@ class Config:
     MIN_EDGE = 0.03
     TOTAL_EXPOSURE_PCT = 0.25
 
-    # Dinamik hesaplanmalı (INITIAL * DAILY_LOSS_LIMIT), ama backward için property
     @property
     def daily_loss_limit_amount(self):
         """Return absolute daily loss limit amount."""
@@ -146,5 +191,6 @@ class Config:
         return portfolio_value * cls.DAILY_LOSS_LIMIT
 
 
-# Singleton instance
+# Singleton instances
 config = Config()
+bot_config = BotConfig()

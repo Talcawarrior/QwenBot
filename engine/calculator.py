@@ -1,14 +1,222 @@
-"""Matematiksel formül ve olasılık hesabı (Normal Dağılım CDF)."""
+"""Matematiksel olasılık, Kelly kriteri hesaplayıcısı ve WeatherEngine konsensüs birleşimi."""
 
-import asyncio
+import math
 import logging
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from datetime import datetime, timezone
 import aiohttp
-from config.settings import config, Config
+from config.settings import config, bot_config, Config
+from database.db import get_session
+from database.models import WeatherMarket, WeatherForecast, Analysis
 
-logger = logging.getLogger("WEATHER_ENGINE")
+logger = logging.getLogger("ENGINE_CALCULATOR")
 
+try:
+    from scipy.stats import norm
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
+    logger.warning("scipy not available, using Abramowitz & Stegun approximation for Normal CDF")
+
+
+class Calculator:
+    """Calculates forecasting probability, Kelly stake sizes, and analyzes markets."""
+
+    def estimate_probability(self, forecasts: List[float], threshold: float, days_ahead: int) -> float:
+        """
+        Tahmin değerlerinden, eşik aşılma olasılığını hesapla.
+        P(X > threshold) hesapla.
+        """
+        if not forecasts:
+            return 0.5
+
+        mean = sum(forecasts) / len(forecasts)
+
+        if len(forecasts) > 1:
+            variance = sum((x - mean) ** 2 for x in forecasts) / (len(forecasts) - 1)
+            std = math.sqrt(variance)
+        else:
+            std = 2.0  # Default 2C uncertainty for single source
+
+        uncertainty_per_day = 0.5
+        total_std = math.sqrt(std**2 + (days_ahead * uncertainty_per_day)**2)
+        total_std = max(total_std, 1.0)
+
+        z = (threshold - mean) / total_std
+
+        if HAS_SCIPY:
+            prob_below = norm.cdf(z)
+        else:
+            prob_below = self._normal_cdf(z)
+
+        prob_above = 1.0 - prob_below
+        return max(0.01, min(0.99, prob_above))
+
+    def kelly_criterion(self, prob: float, odds: float, fraction: float = 0.15) -> float:
+        """Kelly Criterion: f* = (bp - q) / b."""
+        if odds <= 0 or prob <= 0 or prob >= 1:
+            return 0.0
+
+        b = (1 / odds) - 1
+        q = 1 - prob
+
+        kelly = (b * prob - q) / b if b > 0 else 0
+        if kelly <= 0:
+            return 0.0
+        return kelly * fraction
+
+    def _normal_cdf(self, z: float) -> float:
+        """Standard Normal CDF using Abramowitz & Stegun approximation."""
+        if z < -8:
+            return 0.0
+        if z > 8:
+            return 1.0
+
+        b1 = 0.319381530
+        b2 = -0.356563782
+        b3 = 1.781477937
+        b4 = -1.821255978
+        b5 = 1.330274429
+        p = 0.2316419
+
+        if z >= 0:
+            t = 1.0 / (1.0 + p * z)
+            poly = t * (b1 + t * (b2 + t * (b3 + t * (b4 + t * b5))))
+            return 1.0 - (1.0 / (2.0 * math.pi**0.5)) * (math.e ** (-z * z / 2)) * poly
+        
+        t = 1.0 / (1.0 - p * z)
+        poly = t * (b1 + t * (b2 + t * (b3 + t * (b4 + t * b5))))
+        return (1.0 / (2.0 * math.pi**0.5)) * (math.e ** (-z * z / 2)) * poly
+
+    def analyze_market(self, market_id: str) -> Analysis | None:
+        """Bir marketi analiz et."""
+        with get_session() as session:
+            market = session.query(WeatherMarket).filter_by(id=market_id).first()
+            if not market:
+                logger.warning(f"Market bulunamadı: {market_id}")
+                return None
+
+            if not all([market.city, market.threshold, market.target_date, market.metric]):
+                logger.warning(f"Market eksik bilgi: {market_id}")
+                return None
+
+            # En son tahminleri al
+            forecasts = session.query(WeatherForecast).filter(
+                WeatherForecast.market_id == market_id,
+                WeatherForecast.metric == market.metric,
+            ).order_by(WeatherForecast.fetched_at.desc()).all()
+
+            # Her kaynaktan en son tahmini al
+            latest_by_source = {}
+            for f in forecasts:
+                if f.source not in latest_by_source:
+                    latest_by_source[f.source] = f.predicted_value
+
+            forecast_values = list(latest_by_source.values())
+
+            if len(forecast_values) < bot_config.strategy.min_sources:
+                logger.info(
+                    f"Market {market_id}: Yetersiz kaynak "
+                    f"({len(forecast_values)}/{bot_config.strategy.min_sources})"
+                )
+
+            days_ahead = (market.target_date - datetime.utcnow()).days
+
+            # Olasılık hesapla
+            estimated_prob = self.estimate_probability(
+                forecast_values, market.threshold, max(days_ahead, 1)
+            )
+
+            market_implied = market.yes_price or 0.5
+            edge = estimated_prob - market_implied
+
+            if edge > 0:
+                # YES tarafı
+                kelly_frac = self.kelly_criterion(
+                    estimated_prob, market_implied,
+                    bot_config.strategy.kelly_fraction
+                )
+                recommended_side = "YES"
+            else:
+                # NO tarafı
+                no_prob = 1 - estimated_prob
+                no_implied = market.no_price or (1 - market_implied)
+                no_edge = no_prob - no_implied
+
+                if no_edge > 0:
+                    kelly_frac = self.kelly_criterion(
+                        no_prob, no_implied,
+                        bot_config.strategy.kelly_fraction
+                    )
+                    recommended_side = "NO"
+                    edge = no_edge
+                else:
+                    kelly_frac = 0
+                    recommended_side = None
+
+            # Bet miktarı
+            recommended_amount = min(
+                kelly_frac * 1000,  # Varsayılan bankroll $1000
+                bot_config.strategy.max_bet_amount
+            )
+
+            # Bet açılmalı mı?
+            should_bet = (
+                abs(edge) >= bot_config.strategy.min_edge
+                and len(forecast_values) >= bot_config.strategy.min_sources
+                and 0 < days_ahead <= bot_config.strategy.max_days_ahead
+                and (market.liquidity or 0) >= bot_config.strategy.min_liquidity
+                and recommended_amount > 1.0
+            )
+
+            reason_parts = []
+            if abs(edge) < bot_config.strategy.min_edge:
+                reason_parts.append(f"Edge düşük: {edge:.2%}")
+            if len(forecast_values) < bot_config.strategy.min_sources:
+                reason_parts.append(f"Az kaynak: {len(forecast_values)}")
+            if days_ahead > bot_config.strategy.max_days_ahead:
+                reason_parts.append(f"Çok uzak: {days_ahead} gün")
+            if (market.liquidity or 0) < bot_config.strategy.min_liquidity:
+                reason_parts.append(f"Düşük likidite: ${market.liquidity}")
+
+            if not reason_parts:
+                reason = f"BET AÇ! Edge={edge:.2%}, Side={recommended_side}"
+            else:
+                reason = "PASS: " + ", ".join(reason_parts)
+
+            avg_val = sum(forecast_values) / len(forecast_values) if forecast_values else None
+            std_val = (
+                math.sqrt(
+                    sum((x - avg_val)**2 for x in forecast_values)
+                    / len(forecast_values)
+                ) if forecast_values and len(forecast_values) > 1 else None
+            )
+
+            analysis = Analysis(
+                market_id=market_id,
+                estimated_probability=estimated_prob,
+                market_implied_prob=market_implied,
+                edge=edge,
+                avg_forecast_value=avg_val,
+                std_forecast_value=std_val,
+                num_sources=len(forecast_values),
+                recommended_side=recommended_side,
+                recommended_amount=recommended_amount,
+                confidence_score=min(len(forecast_values) / 5, 1.0),
+                should_bet=should_bet,
+                reason=reason,
+                analyzed_at=datetime.utcnow(),
+            )
+            session.add(analysis)
+            logger.info(
+                f"Market {market_id}: prob={estimated_prob:.2%}, "
+                f"market={market_implied:.2%}, edge={edge:.2%}, "
+                f"should_bet={should_bet}"
+            )
+            return analysis
+
+
+# WeatherEngine kept for seamless FastAPI / backward compatibility
 OPEN_METEO_MODEL_MAP = {
     "gfs_seamless": "gfs025",
     "ecmwf_ifs04": "ecmwf_ifs025",
@@ -20,18 +228,9 @@ OPEN_METEO_MODEL_MAP = {
     "meteofrance_seamless": "meteofrance_seamless",
 }
 
-OPEN_METEO_MODEL_REVERSE = {v: k for k, v in OPEN_METEO_MODEL_MAP.items()}
-
-try:
-    from scipy.stats import norm
-    HAS_SCIPY = True
-except ImportError:
-    HAS_SCIPY = False
-    logger.warning("scipy not available, using Abramowitz & Stegun approximation for Normal CDF")
-
 
 class WeatherEngine:
-    """Multi-model ensemble weather forecast engine."""
+    """Weather engine consensus calculator (FastAPI / test compatibility wrapper)."""
 
     def __init__(self, db_session_factory=None, cfg=None):
         self.db_session_factory = db_session_factory
@@ -40,35 +239,19 @@ class WeatherEngine:
         self.model_weights = self.config.get_normalized_weights()
 
     async def start(self):
-        """Initialize HTTP session."""
         if self.session is None:
             self.session = aiohttp.ClientSession()
-            logger.info("WeatherEngine HTTP session started")
 
     async def stop(self):
-        """Close HTTP session."""
         if self.session and not self.session.closed:
             await self.session.close()
             self.session = None
-            logger.info("WeatherEngine HTTP session stopped")
 
     async def get_multi_model_forecast(
-        self,
-        city_code: str,
-        latitude: float,
-        longitude: float,
-        target_date: Optional[datetime] = None,
+        self, city_code: str, latitude: float, longitude: float, target_date: Optional[datetime] = None
     ) -> Optional[Dict]:
-        """Get multi-model ensemble forecast for a specific location."""
         if not city_code or (latitude == 0 and longitude == 0):
-            logger.warning(
-                "Invalid location: city_code=%s, lat=%s, lon=%s",
-                city_code,
-                latitude,
-                longitude,
-            )
             return None
-
         if target_date is None:
             target_date = datetime.now(timezone.utc)
 
@@ -93,17 +276,12 @@ class WeatherEngine:
             if not self.session or self.session.closed:
                 await self.start()
 
-            async with self.session.get(
-                url, params=params, timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
+            async with self.session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status != 200:
-                    logger.error("Open-Meteo API error: %s", resp.status)
                     return None
-
                 data = await resp.json()
                 model_temps = {}
                 daily_data = data.get("daily", {})
-
                 times = daily_data.get("time", [])
                 if not times:
                     return None
@@ -116,7 +294,6 @@ class WeatherEngine:
                         break
 
                 if target_idx is None:
-                    logger.warning("Target date %s not found in forecast", target_str)
                     return None
 
                 for internal_name in self.model_weights.keys():
@@ -128,136 +305,63 @@ class WeatherEngine:
                             model_temps[internal_name] = temps[target_idx]
 
                 if not model_temps:
-                    logger.warning("No model data available for %s", city_code)
                     return None
 
-                return self._calculate_deb_consensus(model_temps, target_date)
+                # Calculate consensus
+                total_weight = sum(self.model_weights.get(m, 0.0) for m in model_temps.keys())
+                if total_weight == 0:
+                    return None
+                weighted_mean = sum(self.model_weights.get(m, 0.0) * t for m, t in model_temps.items()) / total_weight
+                weighted_var = sum(self.model_weights.get(m, 0.0) * (t - weighted_mean)**2 for m, t in model_temps.items()) / total_weight
+                weighted_std = max(weighted_var ** 0.5, 0.5)
 
-        except asyncio.TimeoutError:
-            logger.error("Timeout fetching weather for %s", city_code)
-            return None
+                return {
+                    "weighted_mean": weighted_mean,
+                    "weighted_std": weighted_std,
+                    "model_count": len(model_temps),
+                    "model_temps": model_temps,
+                    "timestamp": datetime.now(timezone.utc),
+                }
         except Exception:
-            logger.exception("Error fetching weather for %s", city_code)
             return None
-
-    def _calculate_deb_consensus(self, model_temps: Dict[str, float], _target_date: datetime) -> Dict:
-        """Calculate DEB (Deterministic Ensemble Blend) Consensus."""
-        if not model_temps:
-            return None
-
-        total_weight = 0.0
-        weighted_sum = 0.0
-
-        for model_name, temp in model_temps.items():
-            weight = self.model_weights.get(model_name, 0.0)
-            weighted_sum += weight * temp
-            total_weight += weight
-
-        if total_weight == 0:
-            return None
-
-        weighted_mean = weighted_sum / total_weight
-
-        weighted_var = 0.0
-        for model_name, temp in model_temps.items():
-            weight = self.model_weights.get(model_name, 0.0)
-            weighted_var += weight * (temp - weighted_mean) ** 2
-
-        weighted_std = (weighted_var / total_weight) ** 0.5
-        weighted_std = max(weighted_std, 0.5)
-
-        logger.info(
-            "DEB Consensus: mean=%.2fC, std=%.2fC, models=%d",
-            weighted_mean,
-            weighted_std,
-            len(model_temps),
-        )
-
-        return {
-            "weighted_mean": weighted_mean,
-            "weighted_std": weighted_std,
-            "model_count": len(model_temps),
-            "model_temps": model_temps,
-            "timestamp": datetime.now(timezone.utc),
-        }
 
     def calculate_probability_above(self, strike_temp: float, consensus: Dict) -> float:
-        """Calculate P(Temp > Strike) using Normal CDF."""
         if not consensus:
             return 0.5
-
         mean = consensus["weighted_mean"]
         std = consensus["weighted_std"]
         z = (strike_temp - mean) / std
-
         if HAS_SCIPY:
-            prob_below = norm.cdf(z)
-        else:
-            prob_below = self._normal_cdf(z)
-
-        prob_above = 1.0 - prob_below
-        return prob_above
+            return 1.0 - norm.cdf(z)
+        return 1.0 - self._normal_cdf(z)
 
     def calculate_probability_below(self, strike_temp: float, consensus: Dict) -> float:
-        """Calculate P(Temp < Strike) using Normal CDF."""
         if not consensus:
             return 0.5
-
         mean = consensus["weighted_mean"]
         std = consensus["weighted_std"]
         z = (strike_temp - mean) / std
-
         if HAS_SCIPY:
             return norm.cdf(z)
         return self._normal_cdf(z)
 
     def _normal_cdf(self, z: float) -> float:
-        """Standard Normal CDF using Abramowitz & Stegun approximation."""
         if z < -8:
             return 0.0
         if z > 8:
             return 1.0
-
-        b1 = 0.319381530
-        b2 = -0.356563782
-        b3 = 1.781477937
-        b4 = -1.821255978
-        b5 = 1.330274429
+        b1, b2, b3, b4, b5 = 0.319381530, -0.356563782, 1.781477937, -1.821255978, 1.330274429
         p = 0.2316419
-
         if z >= 0:
             t = 1.0 / (1.0 + p * z)
             poly = t * (b1 + t * (b2 + t * (b3 + t * (b4 + t * b5))))
-            return (
-                1.0
-                - (1.0 / (2.0 * 3.141592653589793**0.5))
-                * (2.718281828459045 ** (-z * z / 2))
-                * poly
-            )
+            return 1.0 - (1.0 / (2.0 * math.pi**0.5)) * (math.e ** (-z * z / 2)) * poly
         t = 1.0 / (1.0 - p * z)
         poly = t * (b1 + t * (b2 + t * (b3 + t * (b4 + t * b5))))
-        return (
-            (1.0 / (2.0 * 3.141592653589793**0.5))
-            * (2.718281828459045 ** (-z * z / 2))
-            * poly
-        )
+        return (1.0 / (2.0 * math.pi**0.5)) * (math.e ** (-z * z / 2)) * poly
 
-    async def get_forecast(
-        self,
-        city_code: str,
-        latitude: float,
-        longitude: float,
-        target_date: Optional[datetime] = None,
-    ) -> Optional[Dict]:
-        """Alias for get_multi_model_forecast for API compatibility."""
-        return await self.get_multi_model_forecast(
-            city_code, latitude, longitude, target_date
-        )
+    async def get_forecast(self, city_code: str, latitude: float, longitude: float, target_date: Optional[datetime] = None) -> Optional[Dict]:
+        return await self.get_multi_model_forecast(city_code, latitude, longitude, target_date)
 
     def update_model_weights(self, new_weights: dict):
-        """Update weights from SIA Loop."""
         self.model_weights = new_weights
-        logger.info(
-            "WeatherEngine weights updated from SIA: %s...",
-            list(new_weights.keys())[:3],
-        )

@@ -1,9 +1,10 @@
-"""Database connection and session factory management."""
+"""Database setup with WAL mode and custom transaction sessions."""
 
 import os
 import logging
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
+from contextlib import contextmanager
 from config.settings import config
 from database.models import Base
 
@@ -12,7 +13,7 @@ DB_PATH = config.DB_PATH
 
 
 def get_engine():
-    """Create engine with WAL mode enabled."""
+    """Create database engine with optimized SQLite settings."""
     db_dir = os.path.dirname(DB_PATH)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
@@ -45,16 +46,25 @@ def init_db():
     logger.info("Database initialized at %s with WAL mode", DB_PATH)
 
 
+@contextmanager
+def get_session():
+    """Her işlem kendi session'ını alır, hata olursa rollback yapar."""
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 def get_db_session():
-    """Get a new database session."""
+    """Fallback compatibility method for legacy code."""
     return SessionLocal()
 
 
 def get_db_session_factory():
-    """Return the SessionLocal factory for per-task session creation."""
+    """Fallback compatibility method returning the raw sessionmaker factory."""
     return SessionLocal
-
-
-def close_db_session(session):
-    """Close database session."""
-    session.close()

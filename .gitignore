@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+.ruff_cache/
+data/bot.db
+data/bot.db-shm
+data/bot.db-wal
+logs/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PolyMarket Ultimate Weather Bot</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #e2e8f0; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        
+        /* Header */
+        header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 12px; margin-bottom: 20px; }
+        h1 { font-size: 24px; font-weight: 700; }
+        .status-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-left: 10px; }
+        .status-running { background: #22c55e; color: white; }
+        .status-stopped { background: #ef4444; color: white; }
+        .status-locked { background: #f59e0b; color: white; }
+        
+        /* Controls */
+        .controls { display: flex; gap: 10px; margin-bottom: 20px; }
+        button { padding: 10px 20px; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        button:hover { transform: translateY(-2px); }
+        .btn-start { background: #22c55e; color: white; }
+        .btn-stop { background: #ef4444; color: white; }
+        .btn-reset { background: #64748b; color: white; }
+        
+        /* Tabs */
+        .tabs { display: flex; gap: 5px; margin-bottom: 20px; border-bottom: 2px solid #334155; }
+        .tab { padding: 12px 24px; background: #1e293b; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; }
+        .tab.active { background: #667eea; color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        /* Cards */
+        .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .card { background: #1e293b; padding: 20px; border-radius: 12px; border: 1px solid #334155; }
+        .card-title { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
+        .card-value { font-size: 28px; font-weight: 700; margin-top: 8px; }
+        .card-value.positive { color: #22c55e; }
+        .card-value.negative { color: #ef4444; }
+        
+        /* Tables */
+        table { width: 100%; border-collapse: collapse; background: #1e293b; border-radius: 12px; overflow: hidden; }
+        th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #334155; }
+        th { background: #0f172a; font-weight: 600; font-size: 12px; text-transform: uppercase; color: #94a3b8; }
+        tr:hover { background: #334155; }
+        .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .badge-yes { background: #22c55e; color: white; }
+        .badge-no { background: #ef4444; color: white; }
+        .badge-win { background: #22c55e; color: white; }
+        .badge-loss { background: #ef4444; color: white; }
+        .badge-ladder { background: #8b5cf6; color: white; }
+        
+        /* Progress bars */
+        .progress-bar { background: #334155; border-radius: 4px; height: 8px; overflow: hidden; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); transition: width 0.3s; }
+        
+        /* Alerts */
+        .alert { padding: 12px 16px; border-radius: 8px; margin-bottom: 15px; }
+        .alert-warning { background: #fef3c7; color: #92400e; border-left: 4px solid #f59e0b; }
+        .alert-success { background: #dcfce7; color: #166534; border-left: 4px solid #22c55e; }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .card-grid { grid-template-columns: 1fr 1fr; }
+            table { font-size: 12px; }
+            th, td { padding: 8px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>🤖 PolyMarket Ultimate Weather Bot <span id="statusBadge" class="status-badge status-stopped">STOPPED</span></h1>
+            <p style="margin-top: 8px; opacity: 0.9;">v4.0 - 8+ Model Ensemble • DEB Consensus • Fractional Kelly</p>
+        </header>
+        
+        <!-- Controls -->
+        <div class="controls">
+            <button class="btn-start" onclick="startBot()">▶️ Başlat</button>
+            <button class="btn-stop" onclick="stopBot()">⏹️ Durdur</button>
+            <button class="btn-reset" onclick="resetBot()">🔄 Sıfırla</button>
+        </div>
+        
+        <!-- Portfolio Stats -->
+        <div class="card-grid">
+            <div class="card">
+                <div class="card-title">Portfolio Değeri</div>
+                <div class="card-value" id="portfolioValue">$1,000.00</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Günlük PnL</div>
+                <div class="card-value" id="dailyPnl">$0.00</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Smart Pool (%40)</div>
+                <div class="card-value" id="smartPool">$400.00</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Açık Pozisyon</div>
+                <div class="card-value" id="exposure">$0.00</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Toplam Sinyal</div>
+                <div class="card-value" id="totalSignals">0</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Toplam Bahis</div>
+                <div class="card-value" id="totalBets">0</div>
+            </div>
+        </div>
+        
+        <!-- Risk Limits -->
+        <div class="card" style="margin-bottom: 20px;">
+            <h3 style="margin-bottom: 15px;">🛡️ Risk Limitleri</h3>
+            <div class="card-grid">
+                <div>
+                    <div class="card-title">Max Bahis</div>
+                    <div class="card-value" style="font-size: 18px;" id="maxBet">%3</div>
+                </div>
+                <div>
+                    <div class="card-title">Max Exposure</div>
+                    <div class="card-value" style="font-size: 18px;" id="maxExposure">%25</div>
+                </div>
+                <div>
+                    <div class="card-title">Daily Stop-Loss</div>
+                    <div class="card-value" style="font-size: 18px;" id="dailyStop">%5</div>
+                </div>
+                <div>
+                    <div class="card-title">City Cap</div>
+                    <div class="card-value" style="font-size: 18px;" id="cityCap">4</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('signals', event)">🎯 Aktif Sinyaller</button>
+            <button class="tab" onclick="switchTab('markets', event)">🌍 Global Market Watch</button>
+            <button class="tab" onclick="switchTab('history', event)">📊 Geçmiş Bahisler</button>
+            <button class="tab" onclick="switchTab('analytics', event)">📈 Analytics</button>
+        </div>
+        
+        <!-- Tab 1: Active Signals -->
+        <div id="signals" class="tab-content active">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Şehir</th>
+                        <th>Outcome</th>
+                        <th>Ladder</th>
+                        <th>Giriş</th>
+                        <th>Mevcut</th>
+                        <th>Bahis</th>
+                        <th>PnL</th>
+                        <th>Edge</th>
+                        <th>Durum</th>
+                    </tr>
+                </thead>
+                <tbody id="signalsTable">
+                    <tr><td colspan="10" style="text-align: center; padding: 40px;">Henüz aktif bahis yok</td></tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Tab 2: Global Markets -->
+        <div id="markets" class="tab-content">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Şehir</th>
+                        <th>Tarih</th>
+                        <th>Tip</th>
+                        <th>Strike</th>
+                        <th>Model Prob</th>
+                        <th>Market Price</th>
+                        <th>Edge</th>
+                        <th>EV</th>
+                    </tr>
+                </thead>
+                <tbody id="marketsTable">
+                    <tr><td colspan="8" style="text-align: center; padding: 40px;">Market verisi yükleniyor...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Tab 3: History -->
+        <div id="history" class="tab-content">
+            <div class="card-grid" style="margin-bottom: 20px;">
+                <div class="card">
+                    <div class="card-title">Kazanan</div>
+                    <div class="card-value positive" id="totalWon">0</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Kaybeden</div>
+                    <div class="card-value negative" id="totalLost">0</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Win Rate</div>
+                    <div class="card-value" id="winRate">0%</div>
+                </div>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Şehir</th>
+                        <th>Outcome</th>
+                        <th>Bahis</th>
+                        <th>PnL</th>
+                        <th>Sonuç</th>
+                        <th>Tarih</th>
+                    </tr>
+                </thead>
+                <tbody id="historyTable">
+                    <tr><td colspan="7" style="text-align: center; padding: 40px;">Henüz sonuçlanmış bahis yok</td></tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Tab 4: Analytics -->
+        <div id="analytics" class="tab-content">
+            <div class="card-grid">
+                <div class="card" style="grid-column: span 2;">
+                    <h3 style="margin-bottom: 15px;">Portfolio Performansı</h3>
+                    <canvas id="portfolioChart" height="80"></canvas>
+                </div>
+                <div class="card">
+                    <h3 style="margin-bottom: 15px;">Kazanma Oranı</h3>
+                    <canvas id="winRateChart" height="200"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let ws = null;
+        const API_BASE = '';
+        
+        // WebSocket connection
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+            
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleWebSocketMessage(data);
+            };
+            
+            ws.onclose = () => {
+                console.log('WebSocket disconnected, reconnecting...');
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+        
+        function handleWebSocketMessage(data) {
+            console.log('WS Message:', data);
+            switch(data.type) {
+                case 'new_bet':
+                    loadSignals();
+                    break;
+                case 'settlement':
+                    loadHistory();
+                    loadStatus();
+                    break;
+                case 'scan_complete':
+                    document.getElementById('totalSignals').textContent = data.total_signals;
+                    document.getElementById('totalBets').textContent = data.total_bets;
+                    break;
+            }
+        }
+        
+        // API calls
+        async function loadStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/api/status`);
+                const data = await res.json();
+                
+                // Update badge
+                const badge = document.getElementById('statusBadge');
+                if (data.locked) {
+                    badge.className = 'status-badge status-locked';
+                    badge.textContent = 'LOCKED';
+                } else if (data.is_running) {
+                    badge.className = 'status-badge status-running';
+                    badge.textContent = 'RUNNING';
+                } else {
+                    badge.className = 'status-badge status-stopped';
+                    badge.textContent = 'STOPPED';
+                }
+                
+                // Update cards
+                document.getElementById('portfolioValue').textContent = `$${data.portfolio.current.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                const dailyPnlEl = document.getElementById('dailyPnl');
+                dailyPnlEl.textContent = `$${data.portfolio.daily_pnl.toFixed(2)}`;
+                dailyPnlEl.className = `card-value ${data.portfolio.daily_pnl >= 0 ? 'positive' : 'negative'}`;
+                document.getElementById('smartPool').textContent = `$${data.portfolio.smart_pool.toFixed(2)}`;
+                document.getElementById('exposure').textContent = `$${data.portfolio.exposure.toFixed(2)}`;
+                
+                // Update limits
+                document.getElementById('maxBet').textContent = `%${data.limits.max_bet_pct}`;
+                document.getElementById('maxExposure').textContent = `%${data.limits.max_exposure_pct}`;
+                document.getElementById('dailyStop').textContent = `%${data.limits.daily_stop_loss_pct}`;
+                document.getElementById('cityCap').textContent = data.limits.city_cap;
+            } catch (err) {
+                console.error('Status load error:', err);
+            }
+        }
+        
+        async function loadSignals() {
+            try {
+                const res = await fetch(`${API_BASE}/api/signals`);
+                const data = await res.json();
+                const tbody = document.getElementById('signalsTable');
+                
+                if (!data.signals || data.signals.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 40px;">Henüz aktif bahis yok</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = data.signals.map(bet => `
+                    <tr>
+                        <td>#${bet.id}</td>
+                        <td>${bet.city}</td>
+                        <td><span class="badge badge-${bet.outcome.toLowerCase()}">${bet.outcome}</span></td>
+                        <td>${bet.ladder_orders && bet.ladder_orders.length > 0 ? '<span class="badge badge-ladder">🪜 LADDER</span>' : '-'}</td>
+                        <td>${bet.entry_price.toFixed(2)}</td>
+                        <td>${bet.current_price.toFixed(2)}</td>
+                        <td>$${bet.stake_amount.toFixed(2)}</td>
+                        <td class="${bet.unrealized_pnl >= 0 ? 'positive' : 'negative'}">$${bet.unrealized_pnl.toFixed(2)}</td>
+                        <td>${(bet.edge * 100).toFixed(1)}%</td>
+                        <td><span class="badge" style="background: #22c55e;">ACTIVE</span></td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                console.error('Signals load error:', err);
+            }
+        }
+        
+        async function loadMarkets() {
+            try {
+                const res = await fetch(`${API_BASE}/api/markets`);
+                const data = await res.json();
+                const tbody = document.getElementById('marketsTable');
+                
+                if (!data.markets || data.markets.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 40px;">Market bulunamadı</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = data.markets.slice(0, 50).map(m => `
+                    <tr>
+                        <td>${m.city}</td>
+                        <td>${m.date ? new Date(m.date).toLocaleDateString() : '-'}</td>
+                        <td><span class="badge badge-${m.outcome_type.toLowerCase()}">${m.outcome_type}</span></td>
+                        <td>${m.strike_temp}°F</td>
+                        <td>${(m.model_prob * 100).toFixed(1)}%</td>
+                        <td>${m.current_yes_bid.toFixed(2)}</td>
+                        <td style="color: ${m.edge > 0.03 ? '#22c55e' : m.edge < 0 ? '#ef4444' : ''}">${(m.edge * 100).toFixed(1)}%</td>
+                        <td>${m.ev.toFixed(3)}</td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                console.error('Markets load error:', err);
+            }
+        }
+        
+        async function loadHistory() {
+            try {
+                const res = await fetch(`${API_BASE}/api/history`);
+                const data = await res.json();
+                const tbody = document.getElementById('historyTable');
+                
+                if (data.stats) {
+                    document.getElementById('totalWon').textContent = data.stats.total_won;
+                    document.getElementById('totalLost').textContent = data.stats.total_lost;
+                    document.getElementById('winRate').textContent = `${data.stats.win_rate}%`;
+                }
+                
+                if (!data.history || data.history.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px;">Henüz sonuçlanmış bahis yok</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = data.history.map(bet => `
+                    <tr>
+                        <td>#${bet.id}</td>
+                        <td>${bet.city}</td>
+                        <td><span class="badge badge-${bet.outcome.toLowerCase()}">${bet.outcome}</span></td>
+                        <td>$${bet.stake_amount.toFixed(2)}</td>
+                        <td class="${bet.realized_pnl >= 0 ? 'positive' : 'negative'}">$${bet.realized_pnl.toFixed(2)}</td>
+                        <td><span class="badge badge-${bet.result.toLowerCase()}">${bet.result}</span></td>
+                        <td>${bet.settled_at ? new Date(bet.settled_at).toLocaleDateString() : '-'}</td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                console.error('History load error:', err);
+            }
+        }
+        
+        // Control functions
+        async function startBot() {
+            await fetch(`${API_BASE}/api/start`, { method: 'POST' });
+            setTimeout(loadStatus, 500);
+        }
+        
+        async function stopBot() {
+            await fetch(`${API_BASE}/api/stop`, { method: 'POST' });
+            setTimeout(loadStatus, 500);
+        }
+        
+        async function resetBot() {
+            await fetch(`${API_BASE}/api/reset`, { method: 'POST' });
+            setTimeout(loadStatus, 500);
+        }
+        
+        // Tab switching
+        function switchTab(tabId, event) {
+            if (!event) event = {target: document.querySelector(`.tab[onclick*="${tabId}"]`) || document.querySelector(".tab.active")};
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById(tabId).classList.add('active');
+            
+            if (tabId === 'signals') loadSignals();
+            if (tabId === 'markets') loadMarkets();
+            if (tabId === 'history') loadHistory();
+        }
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            connectWebSocket();
+            loadStatus();
+            loadSignals();
+            loadMarkets();
+            loadHistory();
+            
+            // Refresh every 5 seconds
+            setInterval(() => {
+                loadStatus();
+                loadSignals();
+            }, 5000);
+        });
+    </script>
+</body>
+</html>

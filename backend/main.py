@@ -578,6 +578,21 @@ async def scan_loop():
                     await asyncio.sleep(state.config.SCAN_INTERVAL)
                     continue
 
+                # Filter out past/expired markets safely to only process future events
+                now = datetime.utcnow()
+                filtered_markets = []
+                for m in markets_data:
+                    res_date = m.get("resolution_date")
+                    if res_date is None:
+                        filtered_markets.append(m)
+                        continue
+                    # Make it timezone-naive for safe comparison
+                    if res_date.tzinfo is not None:
+                        res_date = res_date.replace(tzinfo=None)
+                    if res_date >= now:
+                        filtered_markets.append(m)
+                markets_data = filtered_markets
+
                 # Markets'i veritabanına kaydet/güncelle (Upsert logic)
                 for m in markets_data[:50]:  # İlk 50 market
                     try:

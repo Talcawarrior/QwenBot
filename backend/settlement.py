@@ -164,7 +164,7 @@ class SettlementEngine:
         resolution_date = getattr(market, "resolution_date", None) if market else None
 
         # Try real historical data from Open-Meteo archive API (BUG 2)
-        if resolution_date and resolution_date < datetime.now(timezone.utc):
+        if resolution_date and resolution_date < datetime.utcnow():
             city_code = getattr(bet, "city_code", None)
             if city_code:
                 lat = None
@@ -181,7 +181,7 @@ class SettlementEngine:
 
         # Fallback: synthetic noise around strike (for future dates or API failure)
         try:
-            if resolution_date and resolution_date < datetime.now(timezone.utc):
+            if resolution_date and resolution_date < datetime.utcnow():
                 noise = random.gauss(0, 2.5)
             else:
                 noise = random.uniform(-3.5, 3.5)
@@ -207,7 +207,7 @@ class SettlementEngine:
                 self.db.query(Bet).filter(Bet.status.in_(["active", "open"])).all()
             )
             settled_count = 0
-            now = datetime.now(timezone.utc)
+            now = datetime.utcnow()
             for bet in active_bets:
                 market = self._get_market_for_bet(bet)
                 if not market or not market.resolution_date:

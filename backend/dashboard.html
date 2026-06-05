@@ -151,6 +151,8 @@
                     <tr>
                         <th>ID</th>
                         <th>Şehir</th>
+                        <th>Açılış Tarihi</th>
+                        <th>Kapanış Tarihi</th>
                         <th>Outcome</th>
                         <th>Ladder</th>
                         <th>Giriş</th>
@@ -162,7 +164,7 @@
                     </tr>
                 </thead>
                 <tbody id="signalsTable">
-                    <tr><td colspan="10" style="text-align: center; padding: 40px;">Henüz aktif bahis yok</td></tr>
+                    <tr><td colspan="12" style="text-align: center; padding: 40px;">Henüz aktif bahis yok</td></tr>
                 </tbody>
             </table>
         </div>
@@ -322,7 +324,7 @@
                 const tbody = document.getElementById('signalsTable');
                 
                 if (!data.signals || data.signals.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 40px;">Henüz aktif bahis yok</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="12" style="text-align: center; padding: 40px;">Henüz aktif bahis yok</td></tr>';
                     return;
                 }
                 
@@ -330,6 +332,8 @@
                     <tr>
                         <td>#${bet.id}</td>
                         <td>${bet.city}</td>
+                        <td>${bet.placed_at ? new Date(bet.placed_at).toLocaleString('tr-TR') : '-'}</td>
+                        <td>${bet.resolution_date ? new Date(bet.resolution_date).toLocaleString('tr-TR') : '-'}</td>
                         <td><span class="badge badge-${bet.outcome.toLowerCase()}">${bet.outcome}</span></td>
                         <td>${bet.ladder_orders && bet.ladder_orders.length > 0 ? '<span class="badge badge-ladder">🪜 LADDER</span>' : '-'}</td>
                         <td>${bet.entry_price.toFixed(2)}</td>

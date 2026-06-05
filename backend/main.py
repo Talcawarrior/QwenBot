@@ -282,6 +282,10 @@ async def get_signals():
 
         signals = []
         for bet in active_bets:
+            # Fetch corresponding market to get the resolution date (closing date)
+            market = db.query(Market).filter(Market.market_id == bet.market_id).first()
+            res_date = market.resolution_date if market else None
+
             signals.append(
                 {
                     "id": bet.id,
@@ -298,6 +302,7 @@ async def get_signals():
                     if isinstance(bet.ladder_data, str) and bet.ladder_data
                     else (bet.ladder_data or []),
                     "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
+                    "resolution_date": res_date.isoformat() if res_date else None,
                     "status": bet.status if bet.status else "UNKNOWN",
                 }
             )
@@ -315,7 +320,17 @@ async def get_markets():
     """Get all markets (Global Market Watch)"""
     db = get_db_session()
     try:
-        markets = db.query(Market).limit(100).all()
+        # Filter out past/expired markets where resolution_date is in the past
+        now = datetime.utcnow()
+        markets = (
+            db.query(Market)
+            .filter(
+                (Market.resolution_date >= now) | (Market.resolution_date.is_(None)),
+                Market.status == "active"
+            )
+            .limit(100)
+            .all()
+        )
         market_list = []
 
         for m in markets:
@@ -647,6 +662,7 @@ async def scan_loop():
 
                     # Market objesi oluştur (use Market directly)
                     market = Market(
+                        market_id=market_data.get("market_id", ""),
                         event_id=market_data.get("event_id", market_data.get("id", "")),
                         city=market_data.get("city", "Unknown"),
                         city_code=city_code,

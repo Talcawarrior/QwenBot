@@ -280,6 +280,22 @@
             }
         }
         
+        // Format a price/dollar value with a sensible number of decimals.
+        // Polymarket prices can be sub-cent (0.001, 0.005, 0.009) and we
+        // don't want to round them to "0.00" — that hides real money.
+        // Heuristic: pick the smallest precision that still distinguishes
+        // the value from 0 (3..5 decimals). Pass `force2=true` for $/USD
+        // columns where the convention is cents-precision.
+        function fmtPrice(value, force2) {
+            if (value === null || value === undefined || Number.isNaN(value)) return '-';
+            const v = Number(value);
+            if (force2) return v.toFixed(2);
+            // Sub-cent prices: show 3-4 decimals
+            if (v > 0 && v < 0.01) return v.toFixed(4);
+            if (v >= 0.01 && v < 1) return v.toFixed(3);
+            return v.toFixed(2);
+        }
+
         // API calls
         async function loadStatus() {
             try {
@@ -346,17 +362,17 @@
                 tbody.innerHTML = data.signals.map(bet => `
                     <tr>
                         <td>#${bet.id}</td>
-                        <td>${bet.city}</td>
+                        <td>${bet.city || '-'}</td>
                         <td>${bet.placed_at ? new Date(bet.placed_at).toLocaleString('tr-TR') : '-'}</td>
                         <td>${bet.resolution_date ? new Date(bet.resolution_date).toLocaleString('tr-TR') : '-'}</td>
-                        <td><span class="badge badge-${bet.outcome.toLowerCase()}">${bet.outcome}</span></td>
+                        <td><span class="badge badge-${(bet.outcome || 'yes').toLowerCase()}">${bet.outcome || 'YES'}</span></td>
                         <td>${bet.ladder_orders && bet.ladder_orders.length > 0 ? '<span class="badge badge-ladder">🪜 LADDER</span>' : '-'}</td>
-                        <td>${bet.entry_price.toFixed(2)}</td>
-                        <td>${bet.current_price.toFixed(2)}</td>
-                        <td>$${bet.stake_amount.toFixed(2)}</td>
-                        <td class="${bet.unrealized_pnl >= 0 ? 'positive' : 'negative'}">$${bet.unrealized_pnl.toFixed(2)}</td>
+                        <td title="${bet.entry_price}">${fmtPrice(bet.entry_price)}</td>
+                        <td title="${bet.current_price}">${fmtPrice(bet.current_price)}</td>
+                        <td>$${fmtPrice(bet.stake_amount, 2)}</td>
+                        <td class="${bet.unrealized_pnl >= 0 ? 'positive' : 'negative'}">$${fmtPrice(bet.unrealized_pnl, 2)}</td>
                         <td>${(bet.edge * 100).toFixed(1)}%</td>
-                        <td><span class="badge" style="background: #22c55e;">ACTIVE</span></td>
+                        <td><span class="badge" style="background: #22c55e;">${bet.status || 'ACTIVE'}</span></td>
                     </tr>
                 `).join('');
             } catch (err) {

@@ -144,6 +144,8 @@ class BetPlacer:
                 rejected = Bet(
                     market_id=analysis.market_id,
                     analysis_id=analysis_id,
+                    city=market.city,
+                    city_code=market.city_code,
                     side=analysis.recommended_side,
                     amount=proposed_amount,
                     price=market.yes_price if analysis.recommended_side == "YES" else market.no_price,
@@ -177,6 +179,8 @@ class BetPlacer:
                 rejected = Bet(
                     market_id=analysis.market_id,
                     analysis_id=analysis_id,
+                    city=market.city,
+                    city_code=market.city_code,
                     side=analysis.recommended_side,
                     amount=proposed_amount,
                     price=market.yes_price if analysis.recommended_side == "YES" else market.no_price,
@@ -201,6 +205,8 @@ class BetPlacer:
             bet = Bet(
                 market_id=analysis.market_id,
                 analysis_id=analysis_id,
+                city=market.city,               # FIX: copy city from market so the
+                city_code=market.city_code,     # dashboard "City" column is populated
                 side=analysis.recommended_side,
                 amount=proposed_amount,
                 price=fill_price,

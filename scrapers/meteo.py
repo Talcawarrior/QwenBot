@@ -2,8 +2,6 @@
 
 import logging
 import requests
-import threading
-import time
 from datetime import datetime
 from database.db import get_session
 from database.models import WeatherMarket, WeatherForecast
@@ -11,51 +9,6 @@ from config.settings import config, bot_config
 from utils.retry import retry
 
 logger = logging.getLogger("SCRAPER_METEO")
-
-
-# Module-level in-process cache for (lat, lon, target_date, source) → result
-# Avoids hammering the upstream APIs when many markets share the same
-# (city, target_date) tuple (e.g., 11 Polymarket threshold markets for
-# "London 2026-06-08" all need the same Open-Meteo forecast).
-_FETCH_CACHE: dict[tuple[float, float, str, str], dict | None] = {}
-_FETCH_CACHE_LOCK = threading.Lock()
-
-
-def _cache_get(key: tuple[float, float, str, str]):
-    with _FETCH_CACHE_LOCK:
-        return _FETCH_CACHE.get(key)
-
-
-def _cache_set(key: tuple[float, float, str, str], value):
-    with _FETCH_CACHE_LOCK:
-        _FETCH_CACHE[key] = value
-
-
-def _cache_clear() -> None:
-    """Reset the fetch cache. Useful for tests and for the scheduler
-    when it wants to force a refresh after a configurable TTL."""
-    with _FETCH_CACHE_LOCK:
-        _FETCH_CACHE.clear()
-
-
-# Per-host request throttle to keep us under Open-Meteo's free-tier burst
-# limits. Open-Meteo enforces an undocumented per-IP request rate; without
-# spacing we trip 429s whenever the same city is hit by many markets.
-_MIN_INTERVAL_S = 0.25  # 250 ms between calls to the same host
-_LAST_CALL_AT: dict[str, float] = {}
-_THROTTLE_LOCK = threading.Lock()
-
-
-def _throttle(host: str) -> None:
-    while True:
-        with _THROTTLE_LOCK:
-            now = time.monotonic()
-            last = _LAST_CALL_AT.get(host, 0.0)
-            wait = _MIN_INTERVAL_S - (now - last)
-            if wait <= 0:
-                _LAST_CALL_AT[host] = now
-                return
-        time.sleep(wait)
 
 
 class MeteoFetcher:
@@ -80,53 +33,31 @@ class MeteoFetcher:
 
     @retry(max_attempts=3, delay=3, exceptions=(requests.RequestException,))
     def _fetch_open_meteo(self, lat: float, lon: float, target_date: str) -> dict | None:
-        """Open-Meteo API (ücretsiz, key gerekmez).
-
-        Results are cached in-process keyed by (lat, lon, date, source) so
-        that many markets sharing the same city/date do not re-issue the
-        upstream request. Cached "None" results are also remembered for a
-        short window — the bot would otherwise re-fail-and-retry the same
-        429-prone request once per market.
-        """
-        cache_key = (round(lat, 4), round(lon, 4), target_date, "openmeteo")
-        cached = _cache_get(cache_key)
-        if cached is not None or cache_key in _FETCH_CACHE:
-            return cached
-
-        _throttle("open-meteo.com")
-        try:
-            resp = requests.get(
-                bot_config.meteo.openmeteo_url,
-                params={
-                    "latitude": lat,
-                    "longitude": lon,
-                    "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
-                    "start_date": target_date,
-                    "end_date": target_date,
-                    "temperature_unit": "celsius",
-                    "timezone": "auto",
-                },
-                timeout=15,
-            )
-        except requests.RequestException:
-            # Cache the failure briefly so we do not retry the same 429
-            # storm from N markets in a single scan cycle.
-            _cache_set(cache_key, None)
-            raise
+        """Open-Meteo API (ücretsiz, key gerekmez)."""
+        resp = requests.get(
+            bot_config.meteo.openmeteo_url,
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+                "start_date": target_date,
+                "end_date": target_date,
+                "temperature_unit": "celsius",
+                "timezone": "auto",
+            },
+            timeout=15
+        )
         resp.raise_for_status()
         data = resp.json()
 
         daily = data.get("daily", {})
         if daily.get("temperature_2m_max"):
-            result = {
+            return {
                 "source": "openmeteo",
                 "temperature_max": daily["temperature_2m_max"][0],
                 "temperature_min": daily["temperature_2m_min"][0],
                 "precipitation_mm": daily["precipitation_sum"][0],
             }
-            _cache_set(cache_key, result)
-            return result
-        _cache_set(cache_key, None)
         return None
 
     @retry(max_attempts=3, delay=3, exceptions=(requests.RequestException,))
@@ -135,39 +66,26 @@ class MeteoFetcher:
         if not bot_config.meteo.weatherapi_key:
             return None
 
-        cache_key = (round(lat, 4), round(lon, 4), target_date, "weatherapi")
-        cached = _cache_get(cache_key)
-        if cached is not None or cache_key in _FETCH_CACHE:
-            return cached
-
-        _throttle("weatherapi.com")
-        try:
-            resp = requests.get(
-                f"{bot_config.meteo.weatherapi_url}/forecast.json",
-                params={
-                    "key": bot_config.meteo.weatherapi_key,
-                    "q": f"{lat},{lon}",
-                    "dt": target_date,
-                },
-                timeout=15,
-            )
-        except requests.RequestException:
-            _cache_set(cache_key, None)
-            raise
+        resp = requests.get(
+            f"{bot_config.meteo.weatherapi_url}/forecast.json",
+            params={
+                "key": bot_config.meteo.weatherapi_key,
+                "q": f"{lat},{lon}",
+                "dt": target_date,
+            },
+            timeout=15
+        )
         resp.raise_for_status()
         data = resp.json()
 
         day = data.get("forecast", {}).get("forecastday", [{}])[0].get("day", {})
         if day:
-            result = {
+            return {
                 "source": "weatherapi",
                 "temperature_max": day.get("maxtemp_c"),
                 "temperature_min": day.get("mintemp_c"),
                 "precipitation_mm": day.get("totalprecip_mm"),
             }
-            _cache_set(cache_key, result)
-            return result
-        _cache_set(cache_key, None)
         return None
 
     def fetch_for_market(self, market_id: str, city: str, target_date: datetime, metric: str) -> int:

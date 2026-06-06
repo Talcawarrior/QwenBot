@@ -63,7 +63,11 @@ class StrategyConfig:
                                     # real market depth.
     kelly_fraction: float = 0.15    # Quarter/Fractional Kelly (aligned with QwenBot 15%)
     min_sources: int = 1            # En az 1 hava kaynağı (aligned for Open-Meteo free tier)
-    max_days_ahead: int = 14        # 14 günden fazla ileriyi oynama
+    # Bot scope: today + 1 + 2 days ahead (0..2 inclusive).
+    # Tightened from 14 to 2 so the bot only trades near-term markets
+    # where the public weather ensemble (GFS/ECMWF/ICON/...) is still
+    # calibrated. Forecasts degrade past 3 days.
+    max_days_ahead: int = 2
 
 
 @dataclass
@@ -125,10 +129,12 @@ class Config:
     PORT = int(os.getenv("PORT", "8091"))
 
     CITY_ICAO_MAP = {
+        # Turkey (4)
         "ankara": "LTAC",
         "istanbul": "LTFM",
         "izmir": "LTBJ",
         "antalya": "LTAI",
+        # North America - USA (15)
         "dallas": "KDAL",
         "miami": "KMIA",
         "chicago": "KORD",
@@ -142,27 +148,61 @@ class Config:
         "boston": "KBOS",
         "seattle": "KSEA",
         "denver": "KDEN",
-        "tokyo": "RJTT",
-        "shanghai": "ZSPD",
-        "jinan": "ZSJN",
-        "zhengzhou": "ZHCC",
-        "beijing": "ZBAA",
-        "seoul": "RKSS",
-        "hong kong": "VHHH",
+        "washington": "KDCA",
+        "san francisco": "KSFO",
+        "orlando": "KMCO",
+        # North America - CA / MX (5)
+        "toronto": "CYYZ",
+        "vancouver": "CYVR",
+        "montreal": "CYUL",
+        "mexico city": "MMMX",
+        "guadalajara": "MMGL",
+        # South America (5)
+        "sao paulo": "SBGR",
+        "rio de janeiro": "SBGL",
+        "buenos aires": "SAEZ",
+        "santiago": "SCEL",
+        "lima": "SPJC",
+        # Europe (15)
         "london": "EGLL",
         "paris": "LFPG",
         "berlin": "EDDT",
         "moscow": "UUEE",
-        "sydney": "YSSY",
-        "dubai": "OMDB",
-        "mexico city": "MMMX",
-        "sao paulo": "SBGR",
-        "rio de janeiro": "SBGL",
         "frankfurt": "EDDF",
         "amsterdam": "EHAM",
         "madrid": "LEMD",
         "rome": "LIRF",
         "barcelona": "LEBL",
+        "munich": "EDDM",
+        "zurich": "LSZH",
+        "vienna": "LOWW",
+        "stockholm": "ESSA",
+        "athens": "LGAV",
+        "lisbon": "LPPT",
+        # Middle East (3)
+        "dubai": "OMDB",
+        "tel aviv": "LLBG",
+        "doha": "OTHH",
+        # Asia (12)
+        "tokyo": "RJTT",
+        "osaka": "RJOO",
+        "shanghai": "ZSPD",
+        "beijing": "ZBAA",
+        "seoul": "RKSS",
+        "hong kong": "VHHH",
+        "taipei": "RCTP",
+        "singapore": "WSSS",
+        "bangkok": "VTBS",
+        "jakarta": "WIII",
+        "mumbai": "VABB",
+        "delhi": "VIDP",
+        # Oceania (3)
+        "sydney": "YSSY",
+        "melbourne": "YMML",
+        "auckland": "NZAA",
+        # Africa (2)
+        "cairo": "HECA",
+        "cape town": "FACT",
     }
     OPEN_METEO_BASE = "https://api.open-meteo.com/v1/forecast"
     FEE_DRAG = 0.005

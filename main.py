@@ -548,7 +548,15 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # Independent Background Scan & Bet Loop (uses decoupled Jobs sequentially)
 async def scan_and_bet_loop():
-    """Sequentially triggers fetch, parse, weather, analyze, and bet placement jobs."""
+    """Sequentially triggers fetch, parse, weather, analyze, and bet placement jobs.
+
+    All blocking work is offloaded to a thread via `asyncio.to_thread` so
+    the FastAPI event loop stays responsive. Without this, a single scan
+    cycle that fetches 50+ Polymarket markets and runs 50+ weather/forecast
+    calls can block the loop for 30+ seconds, which makes every
+    `/api/status`, `/api/signals`, and the WebSocket push hang — and
+    makes the user think "Start button doesn't work after Reset".
+    """
     from database.models import Bet, Analysis
     from jobs.scheduler import (
         run_fetch_markets,
@@ -558,39 +566,46 @@ async def scan_and_bet_loop():
         run_place_bets,
         run_update_prices,
     )
+
+    def _run_cycle() -> int:
+        """One scan cycle. Returns the number of bets placed.
+
+        Runs in a worker thread via asyncio.to_thread, so any DB
+        or HTTP work here cannot stall the FastAPI event loop.
+        """
+        run_fetch_markets()
+        run_parse_markets()
+        run_fetch_weather()
+        run_analyze()
+        n = run_place_bets()
+        try:
+            run_update_prices()
+        except Exception as e:
+            logger.warning("Price refresh failed: %s", e)
+        return n
+
+    def _refresh_counters() -> tuple:
+        """Refresh total_bets/total_signals from the DB. Returns (bets, signals)."""
+        with get_db_session() as session:
+            bets = (
+                session.query(Bet)
+                .filter(Bet.status.in_(("active", "open", "placed", "pending")))
+                .count()
+            )
+            signals = (
+                session.query(Analysis)
+                .filter(Analysis.should_bet.is_(True))
+                .count()
+            )
+        return bets, signals
+
     while state.is_running:
         try:
             logger.info("Executing Scan & Bet job cycle...")
-            run_fetch_markets()
-            run_parse_markets()
-            run_fetch_weather()
-            run_analyze()
-            n_placed = run_place_bets()
-            # Refresh current_price + unrealized_pnl on every open bet
-            # so the dashboard PnL column reflects live market movement
-            # instead of being stuck at 0 until settlement.
-            try:
-                run_update_prices()
-            except Exception as e:
-                logger.warning("Price refresh failed: %s", e)
-
-            # Refresh in-memory counters from DB so the dashboard shows
-            # accurate totals even if the API endpoint is hit between cycles.
-            try:
-                with get_db_session() as session:
-                    state.total_bets = (
-                        session.query(Bet)
-                        .filter(Bet.status.in_(("active", "open", "placed", "pending")))
-                        .count()
-                    )
-                    state.total_signals = (
-                        session.query(Analysis)
-                        .filter(Analysis.should_bet.is_(True))
-                        .count()
-                    )
-            except Exception as e:
-                logger.warning("Stats refresh failed: %s", e)
-
+            n_placed = await asyncio.to_thread(_run_cycle)
+            total_bets, total_signals = await asyncio.to_thread(_refresh_counters)
+            state.total_bets = total_bets
+            state.total_signals = total_signals
             state.last_scan = datetime.now()
             await broadcast_message(
                 {
@@ -610,15 +625,17 @@ async def scan_and_bet_loop():
 
 # Independent Background Settlement Loop (uses decoupled jobs)
 async def settlement_loop():
-    """Sequentially triggers settlement checking."""
+    """Sequentially triggers settlement checking. Blocking work runs in
+    a worker thread to keep the FastAPI event loop responsive.
+    """
     from jobs.scheduler import run_settle
     while state.is_running:
         try:
             logger.info("Executing Settlement job cycle...")
-            run_settle()
+            await asyncio.to_thread(run_settle)
         except Exception as e:
             logger.error("Settlement loop cycle error: %s", e, exc_info=True)
-            
+
         await asyncio.sleep(state.config.SETTLEMENT_INTERVAL)
 
 

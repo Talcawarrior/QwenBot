@@ -13,8 +13,17 @@ logger = logging.getLogger("ENGINE_MARKET_PARSER")
 class MarketParser:
     """Parses text questions to extract structural fields."""
 
-    # Synced with config.settings.Config.CITY_ICAO_MAP (38 cities)
+    # Synced with config.settings.Config.CITY_ICAO_MAP (54+ cities).
+    # Polymarket's /public-search currently exposes ~15 unique cities in
+    # any given 24-hour window, but the parser must recognise all the
+    # cities in ICAO_MAP so that a market question like "the highest
+    # temperature in Toronto be 22°C on June 7" still extracts a city
+    # and a metric we can score. Adding more cities here does NOT
+    # generate markets — Polymarket still has to list them — but it
+    # does prevent a recognised Polymarket market from being dropped
+    # because the parser can't normalise the city name.
     CITY_ALIASES = {
+        # North America (USA)
         "nyc": "new york",
         "new york city": "new york",
         "la": "los angeles",
@@ -34,27 +43,79 @@ class MarketParser:
         "boston": "boston",
         "seattle": "seattle",
         "denver": "denver",
+        "washington": "washington",
+        "san francisco": "san francisco",
+        "orlando": "orlando",
+        "tampa": "tampa",
+        "minneapolis": "minneapolis",
+        "detroit": "detroit",
+        "philadelphia": "philadelphia",
+        "portland": "portland",
+        # North America (CA / MX)
+        "toronto": "toronto",
+        "vancouver": "vancouver",
+        "montreal": "montreal",
+        "mexico city": "mexico city",
+        "guadalajara": "guadalajara",
+        # South America
+        "sao paulo": "sao paulo",
+        "rio de janeiro": "rio de janeiro",
+        "buenos aires": "buenos aires",
+        "santiago": "santiago",
+        "lima": "lima",
+        "bogota": "bogota",
+        # Europe
+        "london": "london",
+        "paris": "paris",
+        "berlin": "berlin",
+        "moscow": "moscow",
+        "frankfurt": "frankfurt",
+        "amsterdam": "amsterdam",
+        "madrid": "madrid",
+        "rome": "rome",
+        "barcelona": "barcelona",
+        "munich": "munich",
+        "zurich": "zurich",
+        "vienna": "vienna",
+        "stockholm": "stockholm",
+        "oslo": "oslo",
+        "copenhagen": "copenhagen",
+        "helsinki": "helsinki",
+        "warsaw": "warsaw",
+        "athens": "athens",
+        "lisbon": "lisbon",
+        # Middle East
+        "dubai": "dubai",
+        "tel aviv": "tel aviv",
+        "doha": "doha",
+        "riyadh": "riyadh",
+        # Asia
         "tokyo": "tokyo",
+        "osaka": "osaka",
         "shanghai": "shanghai",
         "jinan": "jinan",
         "zhengzhou": "zhengzhou",
         "beijing": "beijing",
         "seoul": "seoul",
         "hong kong": "hong kong",
-        "london": "london",
-        "paris": "paris",
-        "berlin": "berlin",
-        "moscow": "moscow",
+        "taipei": "taipei",
+        "singapore": "singapore",
+        "bangkok": "bangkok",
+        "jakarta": "jakarta",
+        "manila": "manila",
+        "kuala lumpur": "kuala lumpur",
+        "mumbai": "mumbai",
+        "delhi": "delhi",
+        # Oceania
         "sydney": "sydney",
-        "dubai": "dubai",
-        "mexico city": "mexico city",
-        "sao paulo": "sao paulo",
-        "rio de janeiro": "rio de janeiro",
-        "frankfurt": "frankfurt",
-        "amsterdam": "amsterdam",
-        "madrid": "madrid",
-        "rome": "rome",
-        "barcelona": "barcelona",
+        "melbourne": "melbourne",
+        "auckland": "auckland",
+        "wellington": "wellington",
+        # Africa
+        "cairo": "cairo",
+        "cape town": "cape town",
+        "johannesburg": "johannesburg",
+        # Turkey
         "istanbul": "istanbul",
         "ankara": "ankara",
         "izmir": "izmir",

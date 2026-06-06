@@ -225,8 +225,11 @@ async def get_signals():
         for bet in active_bets:
             market = db.query(WeatherMarket).filter(WeatherMarket.id == bet.market_id).first()
             res_date = market.target_date if market else None
-            entry = bet.price if bet.price is not None else bet.entry_price
-            current = bet.price if bet.price is not None else bet.entry_price
+            # entry_price and current_price are now the canonical columns
+            # written by place_bet. fall back to legacy `price` only for
+            # back-compat with rows that pre-date the fix.
+            entry = bet.entry_price if bet.entry_price is not None else bet.price
+            current = bet.current_price if bet.current_price is not None else bet.entry_price
             entry = float(entry) if entry is not None else None
             current = float(current) if current is not None else None
             # Real fair value from cached analysis if available; else skip
@@ -255,7 +258,9 @@ async def get_signals():
                     "entry_price": entry,
                     "current_price": current,
                     "stake_amount": bet.amount if bet.amount is not None else bet.stake_amount,
-                    "unrealized_pnl": 0.0,
+                    "unrealized_pnl": (
+                        float(bet.unrealized_pnl) if bet.unrealized_pnl is not None else 0.0
+                    ),
                     "fair_value": fair_value,
                     "edge": edge,
                     "ladder_orders": [],
@@ -545,7 +550,14 @@ async def websocket_endpoint(websocket: WebSocket):
 async def scan_and_bet_loop():
     """Sequentially triggers fetch, parse, weather, analyze, and bet placement jobs."""
     from database.models import Bet, Analysis
-    from jobs.scheduler import run_fetch_markets, run_parse_markets, run_fetch_weather, run_analyze, run_place_bets
+    from jobs.scheduler import (
+        run_fetch_markets,
+        run_parse_markets,
+        run_fetch_weather,
+        run_analyze,
+        run_place_bets,
+        run_update_prices,
+    )
     while state.is_running:
         try:
             logger.info("Executing Scan & Bet job cycle...")
@@ -554,6 +566,13 @@ async def scan_and_bet_loop():
             run_fetch_weather()
             run_analyze()
             n_placed = run_place_bets()
+            # Refresh current_price + unrealized_pnl on every open bet
+            # so the dashboard PnL column reflects live market movement
+            # instead of being stuck at 0 until settlement.
+            try:
+                run_update_prices()
+            except Exception as e:
+                logger.warning("Price refresh failed: %s", e)
 
             # Refresh in-memory counters from DB so the dashboard shows
             # accurate totals even if the API endpoint is hit between cycles.

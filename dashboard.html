@@ -306,7 +306,22 @@
                 dailyPnlEl.className = `card-value ${data.portfolio.daily_pnl >= 0 ? 'positive' : 'negative'}`;
                 document.getElementById('smartPool').textContent = `$${data.portfolio.smart_pool.toFixed(2)}`;
                 document.getElementById('exposure').textContent = `$${data.portfolio.exposure.toFixed(2)}`;
-                
+
+                // Total signals / bets counters. These used to update only
+                // via the scan_complete WebSocket message, which meant the
+                // very first /api/status response after a page reload (or
+                // any moment between WS broadcasts) showed 0/0 even when
+                // the DB had real rows. Keep the WS path as a fast-path
+                // update; this REST path is the source of truth.
+                if (data.stats) {
+                    if (typeof data.stats.total_signals === 'number') {
+                        document.getElementById('totalSignals').textContent = data.stats.total_signals;
+                    }
+                    if (typeof data.stats.total_bets === 'number') {
+                        document.getElementById('totalBets').textContent = data.stats.total_bets;
+                    }
+                }
+
                 // Update limits
                 document.getElementById('maxBet').textContent = `%${data.limits.max_bet_pct}`;
                 document.getElementById('maxExposure').textContent = `%${data.limits.max_exposure_pct}`;
@@ -413,17 +428,27 @@
         // Control functions
         async function startBot() {
             await fetch(`${API_BASE}/api/start`, { method: 'POST' });
-            setTimeout(loadStatus, 500);
+            setTimeout(refreshAll, 500);
         }
-        
+
         async function stopBot() {
             await fetch(`${API_BASE}/api/stop`, { method: 'POST' });
-            setTimeout(loadStatus, 500);
+            setTimeout(refreshAll, 500);
         }
-        
+
         async function resetBot() {
             await fetch(`${API_BASE}/api/reset`, { method: 'POST' });
-            setTimeout(loadStatus, 500);
+            // reset wipes bets, signals, and analyses, so refresh every
+            // panel that could be showing stale rows.
+            setTimeout(refreshAll, 500);
+        }
+
+        // Pull every panel in parallel so the user doesn't have to click
+        // between tabs to see the post-mutation state.
+        function refreshAll() {
+            loadStatus();
+            loadSignals();
+            loadHistory();
         }
         
         // Tab switching

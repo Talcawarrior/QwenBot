@@ -187,13 +187,26 @@ class BetPlacer:
                 session.commit()
                 return None
 
+            # Resolve fill price for the chosen side
+            fill_price = (
+                market.yes_price
+                if analysis.recommended_side == "YES"
+                else market.no_price
+            )
+            fill_price = float(fill_price) if fill_price is not None else 0.0
+            # Shares = amount / price (position size in contracts)
+            shares = (proposed_amount / fill_price) if fill_price > 0 else 0.0
+
             # Bet objesi oluştur
             bet = Bet(
                 market_id=analysis.market_id,
                 analysis_id=analysis_id,
                 side=analysis.recommended_side,
                 amount=proposed_amount,
-                price=market.yes_price if analysis.recommended_side == "YES" else market.no_price,
+                price=fill_price,
+                entry_price=fill_price,        # NEW: source of truth for PNL math
+                shares=shares,                  # NEW: needed for unrealized_pnl
+                current_price=fill_price,       # NEW: starts equal to entry, refreshed by run_update_prices
                 status="pending",
             )
 
@@ -233,16 +246,8 @@ class BetPlacer:
                 market.status = "bet_placed"
                 logger.info(
                     f"📝 PAPER BET AÇILDI: {market.id} | "
-                    f"{analysis.recommended_side} ${bet.amount:.2f} @ {bet.price}"
-                )
-                # Simulated / Paper trade fallback
-                bet.order_id = f"paper_order_{market.id}_{int(datetime.utcnow().timestamp())}"
-                bet.status = "placed"
-                bet.placed_at = datetime.utcnow()
-                market.status = "bet_placed"
-                logger.info(
-                    f"📝 PAPER BET AÇILDI: {market.id} | "
-                    f"{analysis.recommended_side} ${bet.amount:.2f} @ {bet.price}"
+                    f"{analysis.recommended_side} ${bet.amount:.2f} @ {bet.price} "
+                    f"({shares:.2f} shares)"
                 )
 
             session.add(bet)

@@ -5,11 +5,9 @@ MAIN SERVER - FastAPI + WebSocket + Command Line Interface (CLI)
 - Runs the FastAPI live server and WebSocket dashboard on 'python main.py run'
 """
 
-import sys
 import os
 import argparse
 import asyncio
-import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime

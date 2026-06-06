@@ -79,7 +79,6 @@ def run_update_prices():
         Uses the market_id and the side (YES/NO) to pick the right
         price: YES -> yes_price, NO -> 1 - yes_price.
     """
-    from sqlalchemy import func as sqlfunc
     open_statuses = ("active", "open", "placed", "pending")
     updated = 0
     with get_session() as session:

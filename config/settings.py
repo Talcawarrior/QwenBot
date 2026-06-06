@@ -106,7 +106,7 @@ class Config:
     POLYMARKET_GAMMA_API = "https://gamma-api.polymarket.com"
     POLYMARKET_CLOB_API = "https://clob.polymarket.com"
     OPEN_METEO_API = "https://api.open-meteo.com/v1"
-    
+
     MODEL_WEIGHTS = {
         "gfs_seamless": 0.30,
         "ecmwf_ifs04": 0.25,

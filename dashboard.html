@@ -96,6 +96,14 @@
                 <div class="card-value" id="dailyPnl">$0.00</div>
             </div>
             <div class="card">
+                <div class="card-title">Açık PnL <span style="font-size:11px;opacity:0.6">(unrealized)</span></div>
+                <div class="card-value" id="unrealizedPnl">$0.00</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Toplam PnL <span style="font-size:11px;opacity:0.6">(realized+unrealized)</span></div>
+                <div class="card-value" id="totalPnl">$0.00</div>
+            </div>
+            <div class="card">
                 <div class="card-title">Smart Pool (%40)</div>
                 <div class="card-value" id="smartPool">$400.00</div>
             </div>
@@ -320,6 +328,22 @@
                 const dailyPnlEl = document.getElementById('dailyPnl');
                 dailyPnlEl.textContent = `$${data.portfolio.daily_pnl.toFixed(2)}`;
                 dailyPnlEl.className = `card-value ${data.portfolio.daily_pnl >= 0 ? 'positive' : 'negative'}`;
+                // Unrealized PnL (open positions) + total PnL
+                // (realized + unrealized). daily_pnl is realised-only
+                // so it shows 0 until a bet settles, hiding the
+                // true PnL of an open book.
+                const unrealEl = document.getElementById('unrealizedPnl');
+                const totalEl = document.getElementById('totalPnl');
+                if (unrealEl && data.portfolio.unrealized_pnl !== undefined) {
+                    const u = Number(data.portfolio.unrealized_pnl) || 0;
+                    unrealEl.textContent = `${u >= 0 ? '' : '-'}$${Math.abs(u).toFixed(2)}`;
+                    unrealEl.className = `card-value ${u >= 0 ? 'positive' : 'negative'}`;
+                }
+                if (totalEl && data.portfolio.total_pnl !== undefined) {
+                    const t = Number(data.portfolio.total_pnl) || 0;
+                    totalEl.textContent = `${t >= 0 ? '' : '-'}$${Math.abs(t).toFixed(2)}`;
+                    totalEl.className = `card-value ${t >= 0 ? 'positive' : 'negative'}`;
+                }
                 document.getElementById('smartPool').textContent = `$${data.portfolio.smart_pool.toFixed(2)}`;
                 document.getElementById('exposure').textContent = `$${data.portfolio.exposure.toFixed(2)}`;
 

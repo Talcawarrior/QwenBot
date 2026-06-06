@@ -186,6 +186,23 @@ async def get_status():
             .scalar()
         ) or 0.0
 
+        # Live unrealized PNL across all open bets. The dashboard
+        # `daily_pnl` field is realised-only (set by the settler when a
+        # bet actually settles), so on a bot with active open positions
+        # the header shows $0 even though the portfolio is up $180+.
+        # Surface the unrealized total separately so the user can see
+        # the actual PnL of their open book.
+        unrealized_pnl_db = (
+            db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0))
+            .filter(Bet.status.in_(open_statuses))
+            .scalar()
+        ) or 0.0
+        realized_pnl_db = (
+            db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
+            .filter(Bet.status.in_(open_statuses))
+            .scalar()
+        ) or 0.0
+
         return {
             "is_running": state.is_running,
             "locked": state.locked,
@@ -194,6 +211,9 @@ async def get_status():
                 "initial": state.config.INITIAL_PORTFOLIO,
                 "current": portfolio.total_value if portfolio else state.config.INITIAL_PORTFOLIO,
                 "daily_pnl": daily_pnl,
+                "unrealized_pnl": float(unrealized_pnl_db),
+                "realized_pnl": float(realized_pnl_db),
+                "total_pnl": float(unrealized_pnl_db) + float(realized_pnl_db),
                 "exposure": float(exposure_db),
                 "smart_pool": state.config.INITIAL_PORTFOLIO * state.config.SMART_POOL_PCT,
             },

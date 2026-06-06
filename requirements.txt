@@ -8,11 +8,6 @@ uvicorn[standard]>=0.27.0
 # Async HTTP Client
 aiohttp>=3.9.0
 
-# HTTP Client (used by scrapers/meteo.py, scrapers/polymarket.py,
-# executor/settler.py for blocking HTTP calls; the bulk of new I/O
-# uses aiohttp, but these legacy modules still import requests).
-requests>=2.31.0
-
 # WebSocket
 websockets>=12.0
 

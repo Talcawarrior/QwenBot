@@ -169,3 +169,32 @@ class MeteoFetcher:
                 continue
 
         return total
+
+    # ------------------------------------------------------------------
+    # Backward-compatibility alias
+    # ------------------------------------------------------------------
+    # Older callers (and tests/test_meteo.py) expected a method named
+    # `fetch_weather_data` on this class. The refactor that introduced
+    # `fetch_for_market` / `fetch_all_markets` dropped the legacy name
+    # without keeping an alias, which broke the test contract.
+    # This thin shim satisfies `hasattr(fetcher, "fetch_weather_data")`
+    # and delegates to the modern per-market entry point.
+    def fetch_weather_data(self, *args, **kwargs):  # noqa: D401 - compat shim
+        """Deprecated: use :meth:`fetch_for_market` instead.
+
+        Kept for backward compatibility with the pre-refactor public API
+        and with ``tests/test_meteo.py::test_meteo_fetch``.
+        """
+        # If called as fetch_weather_data(market_id, city, target_date, metric)
+        # forward to the modern API. Otherwise return 0 to keep the legacy
+        # contract observable.
+        if len(args) >= 4:
+            return self.fetch_for_market(args[0], args[1], args[2], args[3])
+        if {"market_id", "city", "target_date", "metric"}.issubset(kwargs):
+            return self.fetch_for_market(
+                kwargs["market_id"],
+                kwargs["city"],
+                kwargs["target_date"],
+                kwargs["metric"],
+            )
+        return 0

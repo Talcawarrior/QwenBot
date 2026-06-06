@@ -32,36 +32,67 @@ class PolymarketScraper:
 
     @retry(max_attempts=3, delay=5, exceptions=(requests.RequestException,))
     def _fetch_raw_markets(self) -> list[dict]:
-        """Polymarket'ten ham veri çek."""
-        all_markets = []
-        offset = 0
-        limit = 100
+        """Polymarket'ten ham veri çek — public-search + today+2 gün + parallel."""
+        from datetime import timedelta
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        today = datetime.utcnow()
+        date_strs = [
+            (today + timedelta(days=i)).strftime("%B %#d")
+            for i in range(3)
+        ]
 
-        while offset < 2000:
-            resp = requests.get(
-                f"{self.gamma_url}/markets",
-                params={
-                    "closed": False,
-                    "limit": limit,
-                    "offset": offset,
-                    "active": True,
-                },
-                timeout=30
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        queries = [
+            "highest temperature", "lowest temperature",
+            "temperature", "weather temperature",
+        ]
+        # Also add 5 city-specific queries to broaden coverage beyond
+        # the public-search top results.
+        queries += [
+            "tokyo temperature", "london temperature", "paris temperature",
+            "miami temperature", "seoul temperature",
+        ]
 
-            if not data:
-                break
+        all_events: list[dict] = []
+        seen_slugs: set[str] = set()
 
-            all_markets.extend(data)
-            offset += limit
+        def _fetch_one(q: str) -> list[dict]:
+            try:
+                resp = requests.get(
+                    f"{self.gamma_url}/public-search",
+                    params={"q": q, "limit_per_type": 50},
+                    timeout=20,
+                )
+                resp.raise_for_status()
+                return resp.json().get("events", [])
+            except Exception:
+                return []
 
-            if len(data) < limit:
-                break
+        # Parallel fetch (8 workers) to keep wall time low
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {pool.submit(_fetch_one, q): q for q in queries}
+            for fut in as_completed(futures):
+                for e in fut.result():
+                    slug = e.get("slug", "")
+                    title = e.get("title", "")
+                    if slug in seen_slugs:
+                        continue
+                    # Keep only today + next 2 days
+                    if not any(d in title for d in date_strs):
+                        continue
+                    seen_slugs.add(slug)
+                    # Flatten event's markets so the rest of the pipeline
+                    # (which expects raw market dicts) keeps working.
+                    for m in e.get("markets", []):
+                        m.setdefault("title", title)
+                        m.setdefault("description", title)
+                        m.setdefault("event_slug", slug)
+                        all_events.append(m)
 
-        logger.info(f"Toplam {len(all_markets)} market çekildi")
-        return all_markets
+        logger.info(
+            f"Toplam {len(all_events)} market çekildi "
+            f"({len(seen_slugs)} event, {len(queries)} sorgu)"
+        )
+        return all_events
 
     async def fetch_polymarket_events(self, limit: int = 100) -> list[dict]:
         """Fetch daily-temperature events for compatibility with test suite."""
@@ -72,22 +103,67 @@ class PolymarketScraper:
         return formatted
 
     def _is_weather_market(self, market: dict) -> bool:
-        """Bu market hava durumu ile ilgili mi?"""
-        question = (market.get("question", "") + " " + market.get("description", "")).lower()
-        return any(kw.lower() in question for kw in self.keywords)
+        """Weather market check: BOTH a known city AND a strong weather term required."""
+        question = (
+            market.get("question", "")
+            + " "
+            + market.get("description", "")
+            + " "
+            + market.get("title", "")
+        ).lower()
+        # 1) Must mention a known city (any key from CITY_ICAO_MAP)
+        city_match = any(
+            city_key in question for city_key in config.CITY_ICAO_MAP.keys()
+        )
+        if not city_match:
+            return False
+        # 2) Must contain a strong weather term (reject sports/politics that
+        #    happen to share a city name like "Boston Bruins" or "Dallas Cowboys")
+        strong_terms = (
+            "temperature", "highest", "lowest", "heat", "cold",
+            "snow", "rain", "precipitation", "°F", "°C",
+            "celsius", "fahrenheit", "weather", "humidity",
+            "wind", "storm", "hurricane", "tornado",
+        )
+        return any(term in question for term in strong_terms)
 
     def _parse_market(self, raw: dict) -> dict:
         """Ham marketi yapılandırılmış veriye çevir."""
-        tokens = raw.get("tokens", [])
+        # 1) YES/NO price — handle both /markets (tokens[]) and
+        #    /public-search (lastTradePrice / bestBid / bestAsk) formats.
         yes_price = None
         no_price = None
-
-        for token in tokens:
-            if token.get("outcome", "").upper() == "YES":
-                yes_price = float(token.get("price", 0))
-            elif token.get("outcome", "").upper() == "NO":
-                no_price = float(token.get("price", 0))
-
+        for token in raw.get("tokens", []) or []:
+            outcome = (token.get("outcome", "") or "").upper()
+            try:
+                p = float(token.get("price", 0) or 0)
+            except (TypeError, ValueError):
+                p = None
+            if outcome == "YES" and p is not None:
+                yes_price = p
+            elif outcome == "NO" and p is not None:
+                no_price = p
+        # Fallback: public-search fields
+        if yes_price is None:
+            for key in ("lastTradePrice", "bestBid", "yes_price", "yesPrice"):
+                v = raw.get(key)
+                if v is not None:
+                    try:
+                        yes_price = float(v)
+                        break
+                    except (TypeError, ValueError):
+                        pass
+        if no_price is None:
+            for key in ("noPrice", "no_price", "bestAsk"):
+                v = raw.get(key)
+                if v is not None:
+                    try:
+                        no_price = float(v)
+                        break
+                    except (TypeError, ValueError):
+                        pass
+        if no_price is None and yes_price is not None:
+            no_price = max(0.0, min(1.0, 1.0 - yes_price))
         if yes_price is None:
             yes_price = 0.5
         if no_price is None:
@@ -121,7 +197,7 @@ class PolymarketScraper:
             "no_price": no_price,
             "volume": float(raw.get("volume", 0) or 0),
             "liquidity": float(raw.get("liquidity", 0) or 0),
-            "end_date": raw.get("end_date_iso"),
+            "end_date": raw.get("end_date_iso") or raw.get("endDate"),
             "raw_data": json.dumps(raw),
             "city_name": city_name,
             "city": city_name

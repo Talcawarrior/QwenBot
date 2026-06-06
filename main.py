@@ -155,11 +155,36 @@ async def root():
 @app.get("/api/status")
 async def get_status():
     """Get bot status and metrics."""
+    from database.models import Bet, Analysis
+    from sqlalchemy import func
     db = get_db_session()
     try:
         portfolio = db.query(Portfolio).filter(Portfolio.id == 1).first()
         daily_pnl = state.risk_manager.get_daily_pnl() if state.risk_manager else 0.0
-        exposure = state.risk_manager.get_total_exposure() if state.risk_manager else 0.0
+
+        # Read live counts and exposure from DB so the dashboard doesn't
+        # drift from reality. `placed` is the actual status used by
+        # BetPlacer; include all open-style states (active, open, placed,
+        # pending) so exposure/totals stay consistent even if statuses
+        # evolve. We bypass RiskManager.get_total_exposure() because it
+        # is initialized with `db=None` and only knows about the in-memory
+        # city_bet_counts dict (which the scheduler never updates).
+        open_statuses = ("active", "open", "placed", "pending")
+        total_bets_db = (
+            db.query(Bet)
+            .filter(Bet.status.in_(open_statuses))
+            .count()
+        )
+        total_signals_db = (
+            db.query(Analysis)
+            .filter(Analysis.should_bet.is_(True))
+            .count()
+        )
+        exposure_db = (
+            db.query(func.coalesce(func.sum(Bet.amount), 0.0))
+            .filter(Bet.status.in_(open_statuses))
+            .scalar()
+        ) or 0.0
 
         return {
             "is_running": state.is_running,
@@ -169,12 +194,12 @@ async def get_status():
                 "initial": state.config.INITIAL_PORTFOLIO,
                 "current": portfolio.total_value if portfolio else state.config.INITIAL_PORTFOLIO,
                 "daily_pnl": daily_pnl,
-                "exposure": exposure,
+                "exposure": float(exposure_db),
                 "smart_pool": state.config.INITIAL_PORTFOLIO * state.config.SMART_POOL_PCT,
             },
             "stats": {
-                "total_signals": state.total_signals,
-                "total_bets": state.total_bets,
+                "total_signals": total_signals_db,
+                "total_bets": total_bets_db,
                 "last_scan": state.last_scan.isoformat() if state.last_scan else None,
             },
             "limits": {
@@ -192,7 +217,7 @@ async def get_status():
 
 @app.get("/api/signals")
 async def get_signals():
-    """Get active signals and bets with Ladder details."""
+    """Get active signals and bets with Ladder details — no hardcoded edge/fair_value."""
     db = get_db_session()
     try:
         active_bets = db.query(Bet).filter(Bet.status.in_(["active", "open", "placed", "pending"])).all()
@@ -200,19 +225,39 @@ async def get_signals():
         for bet in active_bets:
             market = db.query(WeatherMarket).filter(WeatherMarket.id == bet.market_id).first()
             res_date = market.target_date if market else None
-
+            entry = bet.price if bet.price is not None else bet.entry_price
+            current = bet.price if bet.price is not None else bet.entry_price
+            entry = float(entry) if entry is not None else None
+            current = float(current) if current is not None else None
+            # Real fair value from cached analysis if available; else skip
+            fair_value = None
+            edge = None
+            try:
+                from database.models import Analysis
+                latest = (
+                    db.query(Analysis)
+                    .filter(Analysis.market_id == bet.market_id)
+                    .order_by(Analysis.analyzed_at.desc())
+                    .first()
+                )
+                if latest is not None:
+                    fair_value = float(latest.estimated_probability)
+                    if current is not None:
+                        edge = fair_value - current
+            except Exception:
+                pass
             signals.append(
                 {
                     "id": bet.id,
                     "market_id": bet.market_id,
                     "city": bet.city or (market.city if market else "Unknown"),
                     "outcome": bet.side if bet.side else (bet.outcome or "YES"),
-                    "entry_price": bet.price if bet.price is not None else (bet.entry_price or 0.5),
-                    "current_price": bet.price if bet.price is not None else (bet.entry_price or 0.5),
-                    "stake_amount": bet.amount if bet.amount is not None else (bet.stake_amount or 0.0),
+                    "entry_price": entry,
+                    "current_price": current,
+                    "stake_amount": bet.amount if bet.amount is not None else bet.stake_amount,
                     "unrealized_pnl": 0.0,
-                    "fair_value": 0.5,
-                    "edge": 0.05,
+                    "fair_value": fair_value,
+                    "edge": edge,
                     "ladder_orders": [],
                     "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
                     "resolution_date": res_date.isoformat() if res_date else None,
@@ -229,39 +274,88 @@ async def get_signals():
 
 @app.get("/api/markets")
 async def get_markets():
-    """Get all future active weather markets (Global Market Watch)"""
+    """Get all future active weather markets (Global Market Watch) — today + 2 days only."""
+    from datetime import timedelta
+    from engine.calculator import Calculator
+    from database.models import WeatherForecast
     db = get_db_session()
     try:
         now = datetime.utcnow()
+        upper = now + timedelta(days=2)
         markets = (
             db.query(WeatherMarket)
             .filter(
-                (WeatherMarket.target_date >= now) | (WeatherMarket.target_date.is_(None)),
+                WeatherMarket.target_date >= now,
+                WeatherMarket.target_date <= upper,
                 WeatherMarket.status == "open",
             )
             .limit(100)
             .all()
         )
         market_list = []
+        calc = Calculator()
 
         for m in markets:
-            model_prob = 0.55
-            current_price = m.yes_price or 0.5
+            # Skip markets missing essential data (no hardcoded fallbacks)
+            if m.yes_price is None or m.threshold is None or not m.city:
+                continue
+            current_price = float(m.yes_price)
+
+            # Real model probability from cached WeatherForecast rows (DB-side)
+            model_prob = current_price
+            try:
+                if m.metric in ("temperature_max", "temperature_min"):
+                    forecasts = (
+                        db.query(WeatherForecast)
+                        .filter(
+                            WeatherForecast.market_id == m.id,
+                            WeatherForecast.metric == m.metric,
+                        )
+                        .order_by(WeatherForecast.fetched_at.desc())
+                        .limit(8)
+                        .all()
+                    )
+                    latest_by_source = {}
+                    for f in forecasts:
+                        if f.source not in latest_by_source:
+                            latest_by_source[f.source] = f.predicted_value
+                    forecast_values = list(latest_by_source.values())
+                    if forecast_values and m.target_date:
+                        days_ahead = max(
+                            (m.target_date - now).days, 1
+                        )
+                        model_prob = calc.estimate_probability(
+                            forecast_values,
+                            float(m.threshold),
+                            days_ahead,
+                        )
+            except Exception:
+                model_prob = current_price
+
             edge = model_prob - current_price
+            ev = (
+                (model_prob * (1 / current_price - 1)) - (1 - model_prob)
+                if current_price > 0
+                else 0.0
+            )
 
             market_list.append(
                 {
                     "id": m.id,
-                    "city": m.city or "Unknown",
+                    "city": m.city,
                     "city_code": m.city_code or "",
                     "date": m.target_date.isoformat() if m.target_date else None,
                     "outcome_type": m.metric or "YES",
-                    "strike_temp": m.threshold or 25.0,
+                    "strike_temp": float(m.threshold),
                     "current_yes_bid": current_price,
-                    "current_no_bid": m.no_price or (1 - current_price),
+                    "current_no_bid": (
+                        m.no_price
+                        if m.no_price is not None
+                        else (1 - current_price)
+                    ),
                     "model_prob": model_prob,
                     "edge": edge,
-                    "ev": (model_prob * (1 / current_price - 1)) - (1 - model_prob) if current_price > 0 else 0,
+                    "ev": ev,
                     "volume": m.volume or 0,
                 }
             )
@@ -393,6 +487,7 @@ async def websocket_endpoint(websocket: WebSocket):
 # Independent Background Scan & Bet Loop (uses decoupled Jobs sequentially)
 async def scan_and_bet_loop():
     """Sequentially triggers fetch, parse, weather, analyze, and bet placement jobs."""
+    from database.models import Bet, Analysis
     from jobs.scheduler import run_fetch_markets, run_parse_markets, run_fetch_weather, run_analyze, run_place_bets
     while state.is_running:
         try:
@@ -401,8 +496,25 @@ async def scan_and_bet_loop():
             run_parse_markets()
             run_fetch_weather()
             run_analyze()
-            run_place_bets()
-            
+            n_placed = run_place_bets()
+
+            # Refresh in-memory counters from DB so the dashboard shows
+            # accurate totals even if the API endpoint is hit between cycles.
+            try:
+                with get_db_session() as session:
+                    state.total_bets = (
+                        session.query(Bet)
+                        .filter(Bet.status.in_(("active", "open", "placed", "pending")))
+                        .count()
+                    )
+                    state.total_signals = (
+                        session.query(Analysis)
+                        .filter(Analysis.should_bet.is_(True))
+                        .count()
+                    )
+            except Exception as e:
+                logger.warning("Stats refresh failed: %s", e)
+
             state.last_scan = datetime.now()
             await broadcast_message(
                 {
@@ -411,11 +523,12 @@ async def scan_and_bet_loop():
                     "markets_scanned": 50,
                     "total_signals": state.total_signals,
                     "total_bets": state.total_bets,
+                    "placed_this_cycle": n_placed,
                 }
             )
         except Exception as e:
             logger.error("Scan loop cycle error: %s", e, exc_info=True)
-        
+
         await asyncio.sleep(state.config.SCAN_INTERVAL)
 
 

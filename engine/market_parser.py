@@ -13,6 +13,7 @@ logger = logging.getLogger("ENGINE_MARKET_PARSER")
 class MarketParser:
     """Parses text questions to extract structural fields."""
 
+    # Synced with config.settings.Config.CITY_ICAO_MAP (38 cities)
     CITY_ALIASES = {
         "nyc": "new york",
         "new york city": "new york",
@@ -21,14 +22,43 @@ class MarketParser:
         "dc": "washington",
         "phx": "phoenix",
         "dallas": "dallas",
-        "istanbul": "istanbul",
-        "london": "london",
+        "miami": "miami",
+        "chicago": "chicago",
+        "new york": "new york",
+        "newyork": "new york",
+        "los angeles": "los angeles",
+        "las vegas": "las vegas",
+        "phoenix": "phoenix",
+        "houston": "houston",
+        "atlanta": "atlanta",
+        "boston": "boston",
+        "seattle": "seattle",
+        "denver": "denver",
+        "tokyo": "tokyo",
+        "shanghai": "shanghai",
         "jinan": "jinan",
         "zhengzhou": "zhengzhou",
-        "tokyo": "tokyo",
+        "beijing": "beijing",
+        "seoul": "seoul",
+        "hong kong": "hong kong",
+        "london": "london",
+        "paris": "paris",
+        "berlin": "berlin",
+        "moscow": "moscow",
+        "sydney": "sydney",
+        "dubai": "dubai",
+        "mexico city": "mexico city",
+        "sao paulo": "sao paulo",
+        "rio de janeiro": "rio de janeiro",
+        "frankfurt": "frankfurt",
+        "amsterdam": "amsterdam",
+        "madrid": "madrid",
+        "rome": "rome",
+        "barcelona": "barcelona",
+        "istanbul": "istanbul",
         "ankara": "ankara",
-        "antalya": "antalya",
         "izmir": "izmir",
+        "antalya": "antalya",
     }
 
     def _extract_city(self, question: str) -> str | None:
@@ -74,19 +104,29 @@ class MarketParser:
             r'(\w+ \d{1,2},?\s*\d{4})',        # July 4, 2025
             r'(\d{4}-\d{2}-\d{2})',            # 2025-07-04
             r'(\d{1,2}/\d{1,2}/\d{4})',        # 7/4/2025
-            r'on\s+(\w+\s+\d{1,2})',           # on May 20
+            # Use word-boundary on "on" so substrings like "London" don't
+            # accidentally match (the "on" inside "London" is preceded by
+            # a word character, so \b prevents a match there).
+            r'\bon\s+(\w+\s+\d{1,2})\b',       # on May 20
         ]
 
         for pattern in patterns:
             match = re.search(pattern, question)
             if match:
                 date_str = match.group(1)
-                # Handle simplified date format e.g. "May 20" by assuming current year (2026)
-                if "on " in pattern:
+                # Handle simplified date format e.g. "May 20" by assuming
+                # current year. The "on" prefix pattern uses \s+ (regex
+                # whitespace), not a literal space, so detect it by checking
+                # the pattern start instead of substring.
+                if pattern.startswith(r"\bon") or pattern.startswith("on") or "on " in pattern:
                     date_str = f"{date_str} 2026"
                 for fmt in ["%B %d, %Y", "%B %d %Y", "%Y-%m-%d", "%m/%d/%Y", "%B %d %Y"]:
                     try:
-                        return datetime.strptime(date_str.strip(), fmt)
+                        d = datetime.strptime(date_str.strip(), fmt)
+                        # Set to end-of-day (23:59:59) so that "today" markets
+                        # are not filtered out by a strict >= comparison
+                        # against the current time-of-day.
+                        return d.replace(hour=23, minute=59, second=59)
                     except ValueError:
                         continue
         return None

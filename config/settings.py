@@ -51,7 +51,10 @@ class StrategyConfig:
     """Strategy & bankroll metrics."""
     min_edge: float = 0.03          # Minimum edge (aligned with QwenBot 3%)
     max_bet_amount: float = 50.0    # Maximum $50 per bet
-    min_liquidity: float = 1000.0   # Minimum $1000 liquidity
+    min_liquidity: float = 0.0      # Liquidity check disabled: Polymarket public-search
+                                    # markets don't expose a `liquidity` field reliably
+                                    # (it's always 0). The current_price already reflects
+                                    # real market depth.
     kelly_fraction: float = 0.15    # Quarter/Fractional Kelly (aligned with QwenBot 15%)
     min_sources: int = 1            # En az 1 hava kaynağı (aligned for Open-Meteo free tier)
     max_days_ahead: int = 14        # 14 günden fazla ileriyi oynama

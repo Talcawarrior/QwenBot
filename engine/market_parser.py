@@ -13,7 +13,17 @@ logger = logging.getLogger("ENGINE_MARKET_PARSER")
 class MarketParser:
     """Parses text questions to extract structural fields."""
 
+    # Synced with config.settings.Config.CITY_ICAO_MAP (54+ cities).
+    # Polymarket's /public-search currently exposes ~15 unique cities in
+    # any given 24-hour window, but the parser must recognise all the
+    # cities in ICAO_MAP so that a market question like "the highest
+    # temperature in Toronto be 22°C on June 7" still extracts a city
+    # and a metric we can score. Adding more cities here does NOT
+    # generate markets — Polymarket still has to list them — but it
+    # does prevent a recognised Polymarket market from being dropped
+    # because the parser can't normalise the city name.
     CITY_ALIASES = {
+        # North America (USA)
         "nyc": "new york",
         "new york city": "new york",
         "la": "los angeles",
@@ -21,14 +31,95 @@ class MarketParser:
         "dc": "washington",
         "phx": "phoenix",
         "dallas": "dallas",
-        "istanbul": "istanbul",
+        "miami": "miami",
+        "chicago": "chicago",
+        "new york": "new york",
+        "newyork": "new york",
+        "los angeles": "los angeles",
+        "las vegas": "las vegas",
+        "phoenix": "phoenix",
+        "houston": "houston",
+        "atlanta": "atlanta",
+        "boston": "boston",
+        "seattle": "seattle",
+        "denver": "denver",
+        "washington": "washington",
+        "san francisco": "san francisco",
+        "orlando": "orlando",
+        "tampa": "tampa",
+        "minneapolis": "minneapolis",
+        "detroit": "detroit",
+        "philadelphia": "philadelphia",
+        "portland": "portland",
+        # North America (CA / MX)
+        "toronto": "toronto",
+        "vancouver": "vancouver",
+        "montreal": "montreal",
+        "mexico city": "mexico city",
+        "guadalajara": "guadalajara",
+        # South America
+        "sao paulo": "sao paulo",
+        "rio de janeiro": "rio de janeiro",
+        "buenos aires": "buenos aires",
+        "santiago": "santiago",
+        "lima": "lima",
+        "bogota": "bogota",
+        # Europe
         "london": "london",
+        "paris": "paris",
+        "berlin": "berlin",
+        "moscow": "moscow",
+        "frankfurt": "frankfurt",
+        "amsterdam": "amsterdam",
+        "madrid": "madrid",
+        "rome": "rome",
+        "barcelona": "barcelona",
+        "munich": "munich",
+        "zurich": "zurich",
+        "vienna": "vienna",
+        "stockholm": "stockholm",
+        "oslo": "oslo",
+        "copenhagen": "copenhagen",
+        "helsinki": "helsinki",
+        "warsaw": "warsaw",
+        "athens": "athens",
+        "lisbon": "lisbon",
+        # Middle East
+        "dubai": "dubai",
+        "tel aviv": "tel aviv",
+        "doha": "doha",
+        "riyadh": "riyadh",
+        # Asia
+        "tokyo": "tokyo",
+        "osaka": "osaka",
+        "shanghai": "shanghai",
         "jinan": "jinan",
         "zhengzhou": "zhengzhou",
-        "tokyo": "tokyo",
+        "beijing": "beijing",
+        "seoul": "seoul",
+        "hong kong": "hong kong",
+        "taipei": "taipei",
+        "singapore": "singapore",
+        "bangkok": "bangkok",
+        "jakarta": "jakarta",
+        "manila": "manila",
+        "kuala lumpur": "kuala lumpur",
+        "mumbai": "mumbai",
+        "delhi": "delhi",
+        # Oceania
+        "sydney": "sydney",
+        "melbourne": "melbourne",
+        "auckland": "auckland",
+        "wellington": "wellington",
+        # Africa
+        "cairo": "cairo",
+        "cape town": "cape town",
+        "johannesburg": "johannesburg",
+        # Turkey
+        "istanbul": "istanbul",
         "ankara": "ankara",
-        "antalya": "antalya",
         "izmir": "izmir",
+        "antalya": "antalya",
     }
 
     def _extract_city(self, question: str) -> str | None:
@@ -74,19 +165,29 @@ class MarketParser:
             r'(\w+ \d{1,2},?\s*\d{4})',        # July 4, 2025
             r'(\d{4}-\d{2}-\d{2})',            # 2025-07-04
             r'(\d{1,2}/\d{1,2}/\d{4})',        # 7/4/2025
-            r'on\s+(\w+\s+\d{1,2})',           # on May 20
+            # Use word-boundary on "on" so substrings like "London" don't
+            # accidentally match (the "on" inside "London" is preceded by
+            # a word character, so \b prevents a match there).
+            r'\bon\s+(\w+\s+\d{1,2})\b',       # on May 20
         ]
 
         for pattern in patterns:
             match = re.search(pattern, question)
             if match:
                 date_str = match.group(1)
-                # Handle simplified date format e.g. "May 20" by assuming current year (2026)
-                if "on " in pattern:
+                # Handle simplified date format e.g. "May 20" by assuming
+                # current year. The "on" prefix pattern uses \s+ (regex
+                # whitespace), not a literal space, so detect it by checking
+                # the pattern start instead of substring.
+                if pattern.startswith(r"\bon") or pattern.startswith("on") or "on " in pattern:
                     date_str = f"{date_str} 2026"
                 for fmt in ["%B %d, %Y", "%B %d %Y", "%Y-%m-%d", "%m/%d/%Y", "%B %d %Y"]:
                     try:
-                        return datetime.strptime(date_str.strip(), fmt)
+                        d = datetime.strptime(date_str.strip(), fmt)
+                        # Set to end-of-day (23:59:59) so that "today" markets
+                        # are not filtered out by a strict >= comparison
+                        # against the current time-of-day.
+                        return d.replace(hour=23, minute=59, second=59)
                     except ValueError:
                         continue
         return None

@@ -49,12 +49,25 @@ class MeteoConfig:
 @dataclass
 class StrategyConfig:
     """Strategy & bankroll metrics."""
-    min_edge: float = 0.03          # Minimum edge (aligned with QwenBot 3%)
+    # Lowered from 0.03 to 0.01 (1%): Polymarket temperature markets
+    # in /public-search almost never produce 3%+ edge because the
+    # market price already discounts the public NWS/Open-Meteo
+    # consensus. 1% is enough to cover bookmaker vig + a thin profit
+    # margin in paper mode. Can be raised back once a private weather
+    # feed (e.g. ECMWF-direct) gives a structural edge.
+    min_edge: float = 0.01
     max_bet_amount: float = 50.0    # Maximum $50 per bet
-    min_liquidity: float = 1000.0   # Minimum $1000 liquidity
+    min_liquidity: float = 0.0      # Liquidity check disabled: Polymarket public-search
+                                    # markets don't expose a `liquidity` field reliably
+                                    # (it's always 0). The current_price already reflects
+                                    # real market depth.
     kelly_fraction: float = 0.15    # Quarter/Fractional Kelly (aligned with QwenBot 15%)
     min_sources: int = 1            # En az 1 hava kaynağı (aligned for Open-Meteo free tier)
-    max_days_ahead: int = 14        # 14 günden fazla ileriyi oynama
+    # Bot scope: today + 1 + 2 days ahead (0..2 inclusive).
+    # Tightened from 14 to 2 so the bot only trades near-term markets
+    # where the public weather ensemble (GFS/ECMWF/ICON/...) is still
+    # calibrated. Forecasts degrade past 3 days.
+    max_days_ahead: int = 2
 
 
 @dataclass
@@ -79,6 +92,11 @@ class Config:
     MAX_EXPOSURE_PCT = float(os.getenv("MAX_EXPOSURE_PCT", "0.25"))
     MAX_BET_PCT = float(os.getenv("MAX_BET_PCT", "0.03"))
     MIN_BET_SIZE = float(os.getenv("MIN_BET_SIZE", "1.0"))
+    # Fixed dollar amount per bet, set via FLAT_BET_USD env var.
+    # 0.0 (default) means 'use the calculator's Kelly-based recommendation'.
+    # > 0.0 means 'every bet is exactly this many USD, ignore Kelly sizing'.
+    # Risk caps (MAX_BET_PCT, TOTAL_EXPOSURE_PCT, CITY_CAP) still apply on top.
+    FLAT_BET_USD = float(os.getenv("FLAT_BET_USD", "0.0"))
     KELLY_FRACTION = float(os.getenv("KELLY_FRACTION", "0.15"))
     DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", "0.05"))
     CITY_CAP = int(os.getenv("CITY_CAP", "4"))
@@ -111,10 +129,12 @@ class Config:
     PORT = int(os.getenv("PORT", "8091"))
 
     CITY_ICAO_MAP = {
+        # Turkey (4)
         "ankara": "LTAC",
         "istanbul": "LTFM",
         "izmir": "LTBJ",
         "antalya": "LTAI",
+        # North America - USA (15)
         "dallas": "KDAL",
         "miami": "KMIA",
         "chicago": "KORD",
@@ -128,27 +148,61 @@ class Config:
         "boston": "KBOS",
         "seattle": "KSEA",
         "denver": "KDEN",
-        "tokyo": "RJTT",
-        "shanghai": "ZSPD",
-        "jinan": "ZSJN",
-        "zhengzhou": "ZHCC",
-        "beijing": "ZBAA",
-        "seoul": "RKSS",
-        "hong kong": "VHHH",
+        "washington": "KDCA",
+        "san francisco": "KSFO",
+        "orlando": "KMCO",
+        # North America - CA / MX (5)
+        "toronto": "CYYZ",
+        "vancouver": "CYVR",
+        "montreal": "CYUL",
+        "mexico city": "MMMX",
+        "guadalajara": "MMGL",
+        # South America (5)
+        "sao paulo": "SBGR",
+        "rio de janeiro": "SBGL",
+        "buenos aires": "SAEZ",
+        "santiago": "SCEL",
+        "lima": "SPJC",
+        # Europe (15)
         "london": "EGLL",
         "paris": "LFPG",
         "berlin": "EDDT",
         "moscow": "UUEE",
-        "sydney": "YSSY",
-        "dubai": "OMDB",
-        "mexico city": "MMMX",
-        "sao paulo": "SBGR",
-        "rio de janeiro": "SBGL",
         "frankfurt": "EDDF",
         "amsterdam": "EHAM",
         "madrid": "LEMD",
         "rome": "LIRF",
         "barcelona": "LEBL",
+        "munich": "EDDM",
+        "zurich": "LSZH",
+        "vienna": "LOWW",
+        "stockholm": "ESSA",
+        "athens": "LGAV",
+        "lisbon": "LPPT",
+        # Middle East (3)
+        "dubai": "OMDB",
+        "tel aviv": "LLBG",
+        "doha": "OTHH",
+        # Asia (12)
+        "tokyo": "RJTT",
+        "osaka": "RJOO",
+        "shanghai": "ZSPD",
+        "beijing": "ZBAA",
+        "seoul": "RKSS",
+        "hong kong": "VHHH",
+        "taipei": "RCTP",
+        "singapore": "WSSS",
+        "bangkok": "VTBS",
+        "jakarta": "WIII",
+        "mumbai": "VABB",
+        "delhi": "VIDP",
+        # Oceania (3)
+        "sydney": "YSSY",
+        "melbourne": "YMML",
+        "auckland": "NZAA",
+        # Africa (2)
+        "cairo": "HECA",
+        "cape town": "FACT",
     }
     OPEN_METEO_BASE = "https://api.open-meteo.com/v1/forecast"
     FEE_DRAG = 0.005

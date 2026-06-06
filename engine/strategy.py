@@ -126,12 +126,17 @@ class RiskManager:
         return self.daily_pnl
 
     def get_total_exposure(self) -> float:
-        """Get total exposure."""
+        """Get total exposure (sum of `amount` for all open/active/placed bets)."""
         if self.db:
             try:
+                # Include all open-style statuses so freshly-placed bets are
+                # counted in exposure. "placed" is what BetPlacer writes
+                # immediately after writing the Bet row. Use `Bet.amount`
+                # (the column BetPlacer actually writes) rather than the
+                # legacy `stake_amount` which stays at 0.
                 total = (
-                    self.db.query(func.coalesce(func.sum(Bet.stake_amount), 0.0))
-                    .filter(Bet.status.in_(["active", "open"]))
+                    self.db.query(func.coalesce(func.sum(Bet.amount), 0.0))
+                    .filter(Bet.status.in_(["active", "open", "placed", "pending"]))
                     .scalar()
                 )
                 return float(total or 0.0)

@@ -3,9 +3,10 @@
 import json
 import logging
 from datetime import datetime, timezone
+from sqlalchemy import func
 from database.db import get_session
 from database.models import Analysis, Bet, WeatherMarket
-from config.settings import bot_config
+from config.settings import bot_config, Config
 
 logger = logging.getLogger("EXECUTOR_BET_PLACER")
 
@@ -13,11 +14,33 @@ logger = logging.getLogger("EXECUTOR_BET_PLACER")
 class BetPlacer:
     """SADECE bet açar. Karar vermez - engine karar verir."""
 
+    # Statuses that count as "open" for risk/exposure accounting.
+    _OPEN_STATUSES = ("active", "open", "placed", "pending")
+
     def __init__(self):
-        self._init_polymarket_client()
+        # Hard guard: the user requires paper-only mode. We refuse to arm
+        # a live trading client whenever Config.DRY_RUN is true, even if
+        # Polymarket credentials are present in the environment.
+        if Config.DRY_RUN:
+            self.ready = False
+            logger.info(
+                "DRY_RUN=true is enforced. BetPlacer will ONLY emit paper/simulated "
+                "orders; the live Polymarket CLOB client is not initialized."
+            )
+        else:
+            self._init_polymarket_client()
+
+        # Lazy-imported risk manager. We import lazily to avoid a circular
+        # import (strategy.py imports from engine/calculator and the bot
+        # state module which itself imports BetPlacer). The risk manager
+        # reads MAX_BET_PCT, TOTAL_EXPOSURE_PCT, and CITY_CAP off the
+        # main `Config` class (not `StrategyConfig`, which only carries
+        # edge / Kelly / source-count knobs).
+        from engine.strategy import RiskManager
+        self.risk_manager = RiskManager(db_session=None, cfg=Config)
 
     def _init_polymarket_client(self):
-        """Polymarket CLOB client'ı hazırla."""
+        """Polymarket CLOB client'ı hazırla (sadece DRY_RUN=false ise çağrılır)."""
         try:
             from py_clob_client.client import ClobClient
             if not bot_config.polymarket.private_key:
@@ -32,7 +55,10 @@ class BetPlacer:
             )
             self.client.set_api_creds(self.client.create_or_derive_api_creds())
             self.ready = True
-            logger.info("Polymarket CLOB Client ready for LIVE execution!")
+            logger.warning(
+                "LIVE TRADING ARMED — DRY_RUN=false and credentials present. "
+                "Real orders will be sent to Polymarket."
+            )
         except Exception as e:
             logger.warning(f"Polymarket client kurulamadı (PAPER TRADE ACTIVE): {e}")
             self.ready = False
@@ -59,20 +85,141 @@ class BetPlacer:
                 logger.info(f"Market {market.id} için zaten bet var")
                 return None
 
+            # ------------------------------------------------------------------
+            # Risk checks. These are enforced HERE (not in run_place_bets)
+            # so every entry point — scheduler, manual API call, CLI — is
+            # guarded by the same hard caps. A previous version of this
+            # module skipped all caps and let exposure balloon to 35x the
+            # smart-pool ceiling, which is what surfaced the
+            # "$14,000 exposure vs $400 smart pool" dashboard disconnect.
+            # ------------------------------------------------------------------
+            proposed_amount = float(analysis.recommended_amount or 0.0)
+
+            # Optional flat-bet override: when Config.FLAT_BET_USD > 0,
+            # every bet is exactly that many USD, ignoring Kelly sizing.
+            # Useful for backtests and small-portfolio testing where
+            # Kelly-derived sizes would otherwise be too small to matter.
+            # Risk caps below still apply on top.
+            flat_bet = float(getattr(self.risk_manager.config, "FLAT_BET_USD", 0.0) or 0.0)
+            if flat_bet > 0.0:
+                logger.info(
+                    f"Flat-bet override active: ${flat_bet:.2f} per bet "
+                    f"(was ${proposed_amount:.2f} from Kelly)."
+                )
+                proposed_amount = flat_bet
+
+            # Cap 1: per-bet cap (MAX_BET_PCT * portfolio). The engine's
+            # Kelly sizing already enforces this in calculator.py, but
+            # we re-apply it here as a hard ceiling.
+            max_bet = float(self.risk_manager.portfolio_value) * float(
+                self.risk_manager.config.MAX_BET_PCT
+            )
+            if proposed_amount > max_bet:
+                logger.warning(
+                    f"Risk cap: Market {market.id} amount ${proposed_amount:.2f} "
+                    f"exceeds per-bet max ${max_bet:.2f} — clamping."
+                )
+                proposed_amount = max_bet
+
+            # Cap 2: total exposure cap (TOTAL_EXPOSURE_PCT * portfolio).
+            # We compute current exposure from the DB (the only source of
+            # truth) and reject the bet if adding it would breach the cap.
+            current_exposure = (
+                session.query(func.coalesce(func.sum(Bet.amount), 0.0))
+                .filter(Bet.status.in_(self._OPEN_STATUSES))
+                .scalar()
+            ) or 0.0
+            current_exposure = float(current_exposure)
+            if not self.risk_manager.check_exposure_cap(current_exposure, proposed_amount):
+                max_exposure = float(
+                    self.risk_manager.portfolio_value
+                ) * float(self.risk_manager.config.TOTAL_EXPOSURE_PCT)
+                logger.warning(
+                    f"Risk cap: Market {market.id} rejected — exposure would "
+                    f"reach ${current_exposure + proposed_amount:.2f}, "
+                    f"exceeding cap ${max_exposure:.2f}."
+                )
+                # Record a synthetic "rejected" bet row for audit visibility
+                # so the user can see WHY exposure is being held back.
+                rejected = Bet(
+                    market_id=analysis.market_id,
+                    analysis_id=analysis_id,
+                    city=market.city,
+                    city_code=market.city_code,
+                    side=analysis.recommended_side,
+                    amount=proposed_amount,
+                    price=market.yes_price if analysis.recommended_side == "YES" else market.no_price,
+                    status="rejected",
+                    error_message=(
+                        f"Exposure cap: ${current_exposure:.2f} + "
+                        f"${proposed_amount:.2f} > ${max_exposure:.2f}"
+                    ),
+                )
+                session.add(rejected)
+                session.commit()
+                return None
+
+            # Cap 3: city cap (CITY_CAP per city).
+            city_key = (market.city or "").lower()
+            city_open_count = (
+                session.query(func.count(Bet.id))
+                .join(WeatherMarket, Bet.market_id == WeatherMarket.id)
+                .filter(
+                    Bet.status.in_(self._OPEN_STATUSES),
+                    func.lower(WeatherMarket.city) == city_key,
+                )
+                .scalar()
+            ) or 0
+            if int(city_open_count) >= int(self.risk_manager.config.CITY_CAP):
+                logger.warning(
+                    f"Risk cap: Market {market.id} rejected — city cap "
+                    f"({city_open_count}/{self.risk_manager.config.CITY_CAP}) "
+                    f"reached for {market.city}."
+                )
+                rejected = Bet(
+                    market_id=analysis.market_id,
+                    analysis_id=analysis_id,
+                    city=market.city,
+                    city_code=market.city_code,
+                    side=analysis.recommended_side,
+                    amount=proposed_amount,
+                    price=market.yes_price if analysis.recommended_side == "YES" else market.no_price,
+                    status="rejected",
+                    error_message=f"City cap: {city_open_count}/{self.risk_manager.config.CITY_CAP} for {market.city}",
+                )
+                session.add(rejected)
+                session.commit()
+                return None
+
+            # Resolve fill price for the chosen side
+            fill_price = (
+                market.yes_price
+                if analysis.recommended_side == "YES"
+                else market.no_price
+            )
+            fill_price = float(fill_price) if fill_price is not None else 0.0
+            # Shares = amount / price (position size in contracts)
+            shares = (proposed_amount / fill_price) if fill_price > 0 else 0.0
+
             # Bet objesi oluştur
             bet = Bet(
                 market_id=analysis.market_id,
                 analysis_id=analysis_id,
+                city=market.city,               # FIX: copy city from market so the
+                city_code=market.city_code,     # dashboard "City" column is populated
                 side=analysis.recommended_side,
-                amount=analysis.recommended_amount,
-                price=market.yes_price if analysis.recommended_side == "YES" else market.no_price,
+                amount=proposed_amount,
+                price=fill_price,
+                entry_price=fill_price,        # NEW: source of truth for PNL math
+                shares=shares,                  # NEW: needed for unrealized_pnl
+                current_price=fill_price,       # NEW: starts equal to entry, refreshed by run_update_prices
                 status="pending",
             )
 
             bet.potential_payout = bet.amount / bet.price if bet.price > 0 else 0
 
             # Live vs Paper execution logic
-            if self.ready:
+            if self.ready and not Config.DRY_RUN:
                 try:
                     from py_clob_client.order_builder.constants import BUY
 
@@ -97,14 +244,16 @@ class BetPlacer:
                     bet.error_message = str(e)
                     logger.error(f"❌ Live Bet açılamadı {market.id}: {e}")
             else:
-                # Simulated / Paper trade fallback
+                # Simulated / Paper trade fallback. Also covers the case
+                # where Config.DRY_RUN is true (defense-in-depth).
                 bet.order_id = f"paper_order_{market.id}_{int(datetime.utcnow().timestamp())}"
                 bet.status = "placed"
                 bet.placed_at = datetime.utcnow()
                 market.status = "bet_placed"
                 logger.info(
                     f"📝 PAPER BET AÇILDI: {market.id} | "
-                    f"{analysis.recommended_side} ${bet.amount:.2f} @ {bet.price}"
+                    f"{analysis.recommended_side} ${bet.amount:.2f} @ {bet.price} "
+                    f"({shares:.2f} shares)"
                 )
 
             session.add(bet)
@@ -132,7 +281,12 @@ class BetPlacer:
         for aid in analysis_ids:
             try:
                 bet = self.place_bet(aid)
-                if bet and bet.status == "placed":
+                # place_bet returns a Bet on success and None on rejection.
+                # We can't read `bet.status` here because the Bet is bound
+                # to the session inside place_bet, which is closed by the
+                # time we get back. Trust the return value: any non-None
+                # return means the bet was successfully written.
+                if bet is not None:
                     placed += 1
             except Exception as e:
                 logger.error(f"Bet hatası (analysis {aid}): {e}")

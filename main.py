@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from config.settings import config
 from config.logging_config import setup_logging
 from database.db import init_db, get_db_session, get_db_session_factory
-from database.models import Portfolio, WeatherMarket, Bet
+from database.models import Portfolio, WeatherMarket, Bet, Analysis
 from engine.strategy import RiskManager, BettingEngine, SIALoop
 from engine.calculator import WeatherEngine
 from executor.settler import SettlementEngine
@@ -155,11 +155,53 @@ async def root():
 @app.get("/api/status")
 async def get_status():
     """Get bot status and metrics."""
+    from database.models import Bet, Analysis
+    from sqlalchemy import func
     db = get_db_session()
     try:
         portfolio = db.query(Portfolio).filter(Portfolio.id == 1).first()
         daily_pnl = state.risk_manager.get_daily_pnl() if state.risk_manager else 0.0
-        exposure = state.risk_manager.get_total_exposure() if state.risk_manager else 0.0
+
+        # Read live counts and exposure from DB so the dashboard doesn't
+        # drift from reality. `placed` is the actual status used by
+        # BetPlacer; include all open-style states (active, open, placed,
+        # pending) so exposure/totals stay consistent even if statuses
+        # evolve. We bypass RiskManager.get_total_exposure() because it
+        # is initialized with `db=None` and only knows about the in-memory
+        # city_bet_counts dict (which the scheduler never updates).
+        open_statuses = ("active", "open", "placed", "pending")
+        total_bets_db = (
+            db.query(Bet)
+            .filter(Bet.status.in_(open_statuses))
+            .count()
+        )
+        total_signals_db = (
+            db.query(Analysis)
+            .filter(Analysis.should_bet.is_(True))
+            .count()
+        )
+        exposure_db = (
+            db.query(func.coalesce(func.sum(Bet.amount), 0.0))
+            .filter(Bet.status.in_(open_statuses))
+            .scalar()
+        ) or 0.0
+
+        # Live unrealized PNL across all open bets. The dashboard
+        # `daily_pnl` field is realised-only (set by the settler when a
+        # bet actually settles), so on a bot with active open positions
+        # the header shows $0 even though the portfolio is up $180+.
+        # Surface the unrealized total separately so the user can see
+        # the actual PnL of their open book.
+        unrealized_pnl_db = (
+            db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0))
+            .filter(Bet.status.in_(open_statuses))
+            .scalar()
+        ) or 0.0
+        realized_pnl_db = (
+            db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
+            .filter(Bet.status.in_(open_statuses))
+            .scalar()
+        ) or 0.0
 
         return {
             "is_running": state.is_running,
@@ -169,12 +211,15 @@ async def get_status():
                 "initial": state.config.INITIAL_PORTFOLIO,
                 "current": portfolio.total_value if portfolio else state.config.INITIAL_PORTFOLIO,
                 "daily_pnl": daily_pnl,
-                "exposure": exposure,
+                "unrealized_pnl": float(unrealized_pnl_db),
+                "realized_pnl": float(realized_pnl_db),
+                "total_pnl": float(unrealized_pnl_db) + float(realized_pnl_db),
+                "exposure": float(exposure_db),
                 "smart_pool": state.config.INITIAL_PORTFOLIO * state.config.SMART_POOL_PCT,
             },
             "stats": {
-                "total_signals": state.total_signals,
-                "total_bets": state.total_bets,
+                "total_signals": total_signals_db,
+                "total_bets": total_bets_db,
                 "last_scan": state.last_scan.isoformat() if state.last_scan else None,
             },
             "limits": {
@@ -192,7 +237,7 @@ async def get_status():
 
 @app.get("/api/signals")
 async def get_signals():
-    """Get active signals and bets with Ladder details."""
+    """Get active signals and bets with Ladder details — no hardcoded edge/fair_value."""
     db = get_db_session()
     try:
         active_bets = db.query(Bet).filter(Bet.status.in_(["active", "open", "placed", "pending"])).all()
@@ -200,19 +245,44 @@ async def get_signals():
         for bet in active_bets:
             market = db.query(WeatherMarket).filter(WeatherMarket.id == bet.market_id).first()
             res_date = market.target_date if market else None
-
+            # entry_price and current_price are now the canonical columns
+            # written by place_bet. fall back to legacy `price` only for
+            # back-compat with rows that pre-date the fix.
+            entry = bet.entry_price if bet.entry_price is not None else bet.price
+            current = bet.current_price if bet.current_price is not None else bet.entry_price
+            entry = float(entry) if entry is not None else None
+            current = float(current) if current is not None else None
+            # Real fair value from cached analysis if available; else skip
+            fair_value = None
+            edge = None
+            try:
+                from database.models import Analysis
+                latest = (
+                    db.query(Analysis)
+                    .filter(Analysis.market_id == bet.market_id)
+                    .order_by(Analysis.analyzed_at.desc())
+                    .first()
+                )
+                if latest is not None:
+                    fair_value = float(latest.estimated_probability)
+                    if current is not None:
+                        edge = fair_value - current
+            except Exception:
+                pass
             signals.append(
                 {
                     "id": bet.id,
                     "market_id": bet.market_id,
                     "city": bet.city or (market.city if market else "Unknown"),
                     "outcome": bet.side if bet.side else (bet.outcome or "YES"),
-                    "entry_price": bet.price if bet.price is not None else (bet.entry_price or 0.5),
-                    "current_price": bet.price if bet.price is not None else (bet.entry_price or 0.5),
-                    "stake_amount": bet.amount if bet.amount is not None else (bet.stake_amount or 0.0),
-                    "unrealized_pnl": 0.0,
-                    "fair_value": 0.5,
-                    "edge": 0.05,
+                    "entry_price": entry,
+                    "current_price": current,
+                    "stake_amount": bet.amount if bet.amount is not None else bet.stake_amount,
+                    "unrealized_pnl": (
+                        float(bet.unrealized_pnl) if bet.unrealized_pnl is not None else 0.0
+                    ),
+                    "fair_value": fair_value,
+                    "edge": edge,
                     "ladder_orders": [],
                     "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
                     "resolution_date": res_date.isoformat() if res_date else None,
@@ -229,39 +299,88 @@ async def get_signals():
 
 @app.get("/api/markets")
 async def get_markets():
-    """Get all future active weather markets (Global Market Watch)"""
+    """Get all future active weather markets (Global Market Watch) — today + 2 days only."""
+    from datetime import timedelta
+    from engine.calculator import Calculator
+    from database.models import WeatherForecast
     db = get_db_session()
     try:
         now = datetime.utcnow()
+        upper = now + timedelta(days=2)
         markets = (
             db.query(WeatherMarket)
             .filter(
-                (WeatherMarket.target_date >= now) | (WeatherMarket.target_date.is_(None)),
+                WeatherMarket.target_date >= now,
+                WeatherMarket.target_date <= upper,
                 WeatherMarket.status == "open",
             )
             .limit(100)
             .all()
         )
         market_list = []
+        calc = Calculator()
 
         for m in markets:
-            model_prob = 0.55
-            current_price = m.yes_price or 0.5
+            # Skip markets missing essential data (no hardcoded fallbacks)
+            if m.yes_price is None or m.threshold is None or not m.city:
+                continue
+            current_price = float(m.yes_price)
+
+            # Real model probability from cached WeatherForecast rows (DB-side)
+            model_prob = current_price
+            try:
+                if m.metric in ("temperature_max", "temperature_min"):
+                    forecasts = (
+                        db.query(WeatherForecast)
+                        .filter(
+                            WeatherForecast.market_id == m.id,
+                            WeatherForecast.metric == m.metric,
+                        )
+                        .order_by(WeatherForecast.fetched_at.desc())
+                        .limit(8)
+                        .all()
+                    )
+                    latest_by_source = {}
+                    for f in forecasts:
+                        if f.source not in latest_by_source:
+                            latest_by_source[f.source] = f.predicted_value
+                    forecast_values = list(latest_by_source.values())
+                    if forecast_values and m.target_date:
+                        days_ahead = max(
+                            (m.target_date - now).days, 1
+                        )
+                        model_prob = calc.estimate_probability(
+                            forecast_values,
+                            float(m.threshold),
+                            days_ahead,
+                        )
+            except Exception:
+                model_prob = current_price
+
             edge = model_prob - current_price
+            ev = (
+                (model_prob * (1 / current_price - 1)) - (1 - model_prob)
+                if current_price > 0
+                else 0.0
+            )
 
             market_list.append(
                 {
                     "id": m.id,
-                    "city": m.city or "Unknown",
+                    "city": m.city,
                     "city_code": m.city_code or "",
                     "date": m.target_date.isoformat() if m.target_date else None,
                     "outcome_type": m.metric or "YES",
-                    "strike_temp": m.threshold or 25.0,
+                    "strike_temp": float(m.threshold),
                     "current_yes_bid": current_price,
-                    "current_no_bid": m.no_price or (1 - current_price),
+                    "current_no_bid": (
+                        m.no_price
+                        if m.no_price is not None
+                        else (1 - current_price)
+                    ),
                     "model_prob": model_prob,
                     "edge": edge,
-                    "ev": (model_prob * (1 / current_price - 1)) - (1 - model_prob) if current_price > 0 else 0,
+                    "ev": ev,
                     "volume": m.volume or 0,
                 }
             )
@@ -358,14 +477,71 @@ async def stop_bot():
 
 @app.post("/api/reset")
 async def reset_bot():
-    """Reset the bot state."""
+    """Reset the bot state and clear in-flight DB rows.
+
+    Stops the bot, then:
+
+    - Sets every open bet's status to 'cancelled' (audit row is
+      preserved; exposure query filters on open_statuses so
+      cancelled bets drop out of the dashboard totals).
+    - Deletes all Analysis rows. They are regenerable on the next
+      scan; keeping them would cause the 'total_signals' counter
+      to remain non-zero after a reset.
+    - Leaves WeatherMarket rows in place — they are the universe
+      of tradable markets and are re-priced on the next scan.
+
+    In-memory state is wiped last so the response uses fresh
+    values. The reset is idempotent: pressing the button twice
+    in a row is a no-op the second time.
+    """
+    # 1. Stop background loops first so they can't race the cleanup
+    #    and re-insert rows we are about to delete.
     await stop_bot()
+
+    # 2. DB cleanup. Use a single session so the changes are atomic.
+    open_statuses = ("active", "open", "placed", "pending")
+    cancelled_bets = 0
+    deleted_analyses = 0
+    db = get_db_session()
+    try:
+        cancelled_bets = (
+            db.query(Bet)
+            .filter(Bet.status.in_(open_statuses))
+            .update({"status": "cancelled"}, synchronize_session=False)
+        )
+        deleted_analyses = (
+            db.query(Analysis)
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.error("reset_bot: DB cleanup failed: %s", exc)
+        raise
+    finally:
+        db.close()
+
+    # 3. In-memory state wipe. The /api/status handler now reads
+    #    Bet/Analysis from the DB, so step 2 already dropped the
+    #    counters to zero; these assignments are belt-and-braces.
     state.locked = False
     state.lock_reason = None
     state.total_signals = 0
     state.total_bets = 0
     state.last_scan = None
-    return {"status": "reset", "message": "Bot sıfırlandı"}
+
+    logger.info(
+        "reset_bot: cancelled %d open bets, deleted %d analyses",
+        cancelled_bets,
+        deleted_analyses,
+    )
+
+    return {
+        "status": "reset",
+        "message": "Bot sıfırlandı",
+        "cancelled_bets": int(cancelled_bets or 0),
+        "deleted_analyses": int(deleted_analyses or 0),
+    }
 
 
 @app.websocket("/ws")
@@ -392,17 +568,64 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # Independent Background Scan & Bet Loop (uses decoupled Jobs sequentially)
 async def scan_and_bet_loop():
-    """Sequentially triggers fetch, parse, weather, analyze, and bet placement jobs."""
-    from jobs.scheduler import run_fetch_markets, run_parse_markets, run_fetch_weather, run_analyze, run_place_bets
+    """Sequentially triggers fetch, parse, weather, analyze, and bet placement jobs.
+
+    All blocking work is offloaded to a thread via `asyncio.to_thread` so
+    the FastAPI event loop stays responsive. Without this, a single scan
+    cycle that fetches 50+ Polymarket markets and runs 50+ weather/forecast
+    calls can block the loop for 30+ seconds, which makes every
+    `/api/status`, `/api/signals`, and the WebSocket push hang — and
+    makes the user think "Start button doesn't work after Reset".
+    """
+    from database.models import Bet, Analysis
+    from jobs.scheduler import (
+        run_fetch_markets,
+        run_parse_markets,
+        run_fetch_weather,
+        run_analyze,
+        run_place_bets,
+        run_update_prices,
+    )
+
+    def _run_cycle() -> int:
+        """One scan cycle. Returns the number of bets placed.
+
+        Runs in a worker thread via asyncio.to_thread, so any DB
+        or HTTP work here cannot stall the FastAPI event loop.
+        """
+        run_fetch_markets()
+        run_parse_markets()
+        run_fetch_weather()
+        run_analyze()
+        n = run_place_bets()
+        try:
+            run_update_prices()
+        except Exception as e:
+            logger.warning("Price refresh failed: %s", e)
+        return n
+
+    def _refresh_counters() -> tuple:
+        """Refresh total_bets/total_signals from the DB. Returns (bets, signals)."""
+        with get_db_session() as session:
+            bets = (
+                session.query(Bet)
+                .filter(Bet.status.in_(("active", "open", "placed", "pending")))
+                .count()
+            )
+            signals = (
+                session.query(Analysis)
+                .filter(Analysis.should_bet.is_(True))
+                .count()
+            )
+        return bets, signals
+
     while state.is_running:
         try:
             logger.info("Executing Scan & Bet job cycle...")
-            run_fetch_markets()
-            run_parse_markets()
-            run_fetch_weather()
-            run_analyze()
-            run_place_bets()
-            
+            n_placed = await asyncio.to_thread(_run_cycle)
+            total_bets, total_signals = await asyncio.to_thread(_refresh_counters)
+            state.total_bets = total_bets
+            state.total_signals = total_signals
             state.last_scan = datetime.now()
             await broadcast_message(
                 {
@@ -411,25 +634,28 @@ async def scan_and_bet_loop():
                     "markets_scanned": 50,
                     "total_signals": state.total_signals,
                     "total_bets": state.total_bets,
+                    "placed_this_cycle": n_placed,
                 }
             )
         except Exception as e:
             logger.error("Scan loop cycle error: %s", e, exc_info=True)
-        
+
         await asyncio.sleep(state.config.SCAN_INTERVAL)
 
 
 # Independent Background Settlement Loop (uses decoupled jobs)
 async def settlement_loop():
-    """Sequentially triggers settlement checking."""
+    """Sequentially triggers settlement checking. Blocking work runs in
+    a worker thread to keep the FastAPI event loop responsive.
+    """
     from jobs.scheduler import run_settle
     while state.is_running:
         try:
             logger.info("Executing Settlement job cycle...")
-            run_settle()
+            await asyncio.to_thread(run_settle)
         except Exception as e:
             logger.error("Settlement loop cycle error: %s", e, exc_info=True)
-            
+
         await asyncio.sleep(state.config.SETTLEMENT_INTERVAL)
 
 

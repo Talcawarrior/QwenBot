@@ -62,6 +62,54 @@ def run_place_bets():
     return f"{count} adet yeni bet açıldı"
 
 
+def run_update_prices():
+    """Refresh `current_price` (and `unrealized_pnl`) on every open bet.
+
+    The Bet row is created with `current_price = entry_price` (no
+    market movement yet). The settler updates current_price only at
+    settlement time, which means PnL stays at 0 for the entire
+    active position lifetime — misleading on the dashboard and
+    impossible to use for risk management. Run this on every scan
+    cycle so the dashboard reflects live price movement.
+
+    Algorithm:
+        For every Bet in an open status, look up the latest YES
+        price of the underlying market, set Bet.current_price to it,
+        and recompute unrealized_pnl = (current - entry) * shares.
+        Uses the market_id and the side (YES/NO) to pick the right
+        price: YES -> yes_price, NO -> 1 - yes_price.
+    """
+    from sqlalchemy import func as sqlfunc
+    open_statuses = ("active", "open", "placed", "pending")
+    updated = 0
+    with get_session() as session:
+        bets = (
+            session.query(Bet)
+            .filter(Bet.status.in_(open_statuses))
+            .all()
+        )
+        for bet in bets:
+            market = session.query(WeatherMarket).filter(
+                WeatherMarket.id == bet.market_id
+            ).first()
+            if not market or market.yes_price is None:
+                continue
+            yes_price = float(market.yes_price)
+            if bet.side and bet.side.upper() == "NO":
+                current = max(0.0, min(1.0, 1.0 - yes_price))
+            else:
+                current = max(0.0, min(1.0, yes_price))
+            entry = float(bet.entry_price or bet.price or 0.0)
+            shares = float(bet.shares or 0.0)
+            bet.current_price = current
+            bet.unrealized_pnl = (current - entry) * shares
+            # bet.pnl is "realized" — leave it alone. The dashboard
+            # shows unrealized_pnl, so the live number is what changes.
+            updated += 1
+        session.commit()
+    return f"{updated} açık bet'in current_price/unrealized_pnl güncellendi"
+
+
 def run_settle():
     """Settle resolved bets against actual weather data."""
     from executor.settler import Settler

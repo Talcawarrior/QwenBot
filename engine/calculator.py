@@ -120,11 +120,14 @@ class Calculator:
                     f"({len(forecast_values)}/{bot_config.strategy.min_sources})"
                 )
 
+            # days_ahead: use calendar days (>=0) and treat "today" as 1 day
+            # so that (target_date=23:59:59, now=04:21) -> 0 still means "today".
             days_ahead = (market.target_date - datetime.utcnow()).days
+            days_ahead_for_check = max(days_ahead, 1)
 
             # Olasılık hesapla
             estimated_prob = self.estimate_probability(
-                forecast_values, market.threshold, max(days_ahead, 1)
+                forecast_values, market.threshold, days_ahead_for_check
             )
 
             market_implied = market.yes_price or 0.5
@@ -161,11 +164,22 @@ class Calculator:
             )
 
             # Bet açılmalı mı?
+            # NOTE: Polymarket'te public-search'ten gelen marketlerin
+            # `liquidity` alanı genelde 0 (price bize zaten gerçek bilgi veriyor),
+            # bu yüzden likidite kontrolünü kaldırıyoruz — gerçek piyasa sinyali
+            # `volume` veya `volume24hr` alanlarından biridir; bunlar da yoksa
+            # `current_price` zaten likiditeyi yansıtır.
+            # Yine de kullanıcı isterse `bot_config.strategy.min_liquidity`
+            # değerini 0 yaparak bunu bypass edebilir.
+            liquidity_ok = (
+                (market.liquidity or 0) >= bot_config.strategy.min_liquidity
+                or bot_config.strategy.min_liquidity <= 0
+            )
             should_bet = (
                 abs(edge) >= bot_config.strategy.min_edge
                 and len(forecast_values) >= bot_config.strategy.min_sources
-                and 0 < days_ahead <= bot_config.strategy.max_days_ahead
-                and (market.liquidity or 0) >= bot_config.strategy.min_liquidity
+                and 0 <= days_ahead <= bot_config.strategy.max_days_ahead
+                and liquidity_ok
                 and recommended_amount > 1.0
             )
 

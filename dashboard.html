@@ -96,6 +96,14 @@
                 <div class="card-value" id="dailyPnl">$0.00</div>
             </div>
             <div class="card">
+                <div class="card-title">Açık PnL <span style="font-size:11px;opacity:0.6">(unrealized)</span></div>
+                <div class="card-value" id="unrealizedPnl">$0.00</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Toplam PnL <span style="font-size:11px;opacity:0.6">(realized+unrealized)</span></div>
+                <div class="card-value" id="totalPnl">$0.00</div>
+            </div>
+            <div class="card">
                 <div class="card-title">Smart Pool (%40)</div>
                 <div class="card-value" id="smartPool">$400.00</div>
             </div>
@@ -280,6 +288,22 @@
             }
         }
         
+        // Format a price/dollar value with a sensible number of decimals.
+        // Polymarket prices can be sub-cent (0.001, 0.005, 0.009) and we
+        // don't want to round them to "0.00" — that hides real money.
+        // Heuristic: pick the smallest precision that still distinguishes
+        // the value from 0 (3..5 decimals). Pass `force2=true` for $/USD
+        // columns where the convention is cents-precision.
+        function fmtPrice(value, force2) {
+            if (value === null || value === undefined || Number.isNaN(value)) return '-';
+            const v = Number(value);
+            if (force2) return v.toFixed(2);
+            // Sub-cent prices: show 3-4 decimals
+            if (v > 0 && v < 0.01) return v.toFixed(4);
+            if (v >= 0.01 && v < 1) return v.toFixed(3);
+            return v.toFixed(2);
+        }
+
         // API calls
         async function loadStatus() {
             try {
@@ -304,9 +328,40 @@
                 const dailyPnlEl = document.getElementById('dailyPnl');
                 dailyPnlEl.textContent = `$${data.portfolio.daily_pnl.toFixed(2)}`;
                 dailyPnlEl.className = `card-value ${data.portfolio.daily_pnl >= 0 ? 'positive' : 'negative'}`;
+                // Unrealized PnL (open positions) + total PnL
+                // (realized + unrealized). daily_pnl is realised-only
+                // so it shows 0 until a bet settles, hiding the
+                // true PnL of an open book.
+                const unrealEl = document.getElementById('unrealizedPnl');
+                const totalEl = document.getElementById('totalPnl');
+                if (unrealEl && data.portfolio.unrealized_pnl !== undefined) {
+                    const u = Number(data.portfolio.unrealized_pnl) || 0;
+                    unrealEl.textContent = `${u >= 0 ? '' : '-'}$${Math.abs(u).toFixed(2)}`;
+                    unrealEl.className = `card-value ${u >= 0 ? 'positive' : 'negative'}`;
+                }
+                if (totalEl && data.portfolio.total_pnl !== undefined) {
+                    const t = Number(data.portfolio.total_pnl) || 0;
+                    totalEl.textContent = `${t >= 0 ? '' : '-'}$${Math.abs(t).toFixed(2)}`;
+                    totalEl.className = `card-value ${t >= 0 ? 'positive' : 'negative'}`;
+                }
                 document.getElementById('smartPool').textContent = `$${data.portfolio.smart_pool.toFixed(2)}`;
                 document.getElementById('exposure').textContent = `$${data.portfolio.exposure.toFixed(2)}`;
-                
+
+                // Total signals / bets counters. These used to update only
+                // via the scan_complete WebSocket message, which meant the
+                // very first /api/status response after a page reload (or
+                // any moment between WS broadcasts) showed 0/0 even when
+                // the DB had real rows. Keep the WS path as a fast-path
+                // update; this REST path is the source of truth.
+                if (data.stats) {
+                    if (typeof data.stats.total_signals === 'number') {
+                        document.getElementById('totalSignals').textContent = data.stats.total_signals;
+                    }
+                    if (typeof data.stats.total_bets === 'number') {
+                        document.getElementById('totalBets').textContent = data.stats.total_bets;
+                    }
+                }
+
                 // Update limits
                 document.getElementById('maxBet').textContent = `%${data.limits.max_bet_pct}`;
                 document.getElementById('maxExposure').textContent = `%${data.limits.max_exposure_pct}`;
@@ -331,17 +386,17 @@
                 tbody.innerHTML = data.signals.map(bet => `
                     <tr>
                         <td>#${bet.id}</td>
-                        <td>${bet.city}</td>
+                        <td>${bet.city || '-'}</td>
                         <td>${bet.placed_at ? new Date(bet.placed_at).toLocaleString('tr-TR') : '-'}</td>
                         <td>${bet.resolution_date ? new Date(bet.resolution_date).toLocaleString('tr-TR') : '-'}</td>
-                        <td><span class="badge badge-${bet.outcome.toLowerCase()}">${bet.outcome}</span></td>
+                        <td><span class="badge badge-${(bet.outcome || 'yes').toLowerCase()}">${bet.outcome || 'YES'}</span></td>
                         <td>${bet.ladder_orders && bet.ladder_orders.length > 0 ? '<span class="badge badge-ladder">🪜 LADDER</span>' : '-'}</td>
-                        <td>${bet.entry_price.toFixed(2)}</td>
-                        <td>${bet.current_price.toFixed(2)}</td>
-                        <td>$${bet.stake_amount.toFixed(2)}</td>
-                        <td class="${bet.unrealized_pnl >= 0 ? 'positive' : 'negative'}">$${bet.unrealized_pnl.toFixed(2)}</td>
+                        <td title="${bet.entry_price}">${fmtPrice(bet.entry_price)}</td>
+                        <td title="${bet.current_price}">${fmtPrice(bet.current_price)}</td>
+                        <td>$${fmtPrice(bet.stake_amount, 2)}</td>
+                        <td class="${bet.unrealized_pnl >= 0 ? 'positive' : 'negative'}">$${fmtPrice(bet.unrealized_pnl, 2)}</td>
                         <td>${(bet.edge * 100).toFixed(1)}%</td>
-                        <td><span class="badge" style="background: #22c55e;">ACTIVE</span></td>
+                        <td><span class="badge" style="background: #22c55e;">${bet.status || 'ACTIVE'}</span></td>
                     </tr>
                 `).join('');
             } catch (err) {
@@ -413,17 +468,27 @@
         // Control functions
         async function startBot() {
             await fetch(`${API_BASE}/api/start`, { method: 'POST' });
-            setTimeout(loadStatus, 500);
+            setTimeout(refreshAll, 500);
         }
-        
+
         async function stopBot() {
             await fetch(`${API_BASE}/api/stop`, { method: 'POST' });
-            setTimeout(loadStatus, 500);
+            setTimeout(refreshAll, 500);
         }
-        
+
         async function resetBot() {
             await fetch(`${API_BASE}/api/reset`, { method: 'POST' });
-            setTimeout(loadStatus, 500);
+            // reset wipes bets, signals, and analyses, so refresh every
+            // panel that could be showing stale rows.
+            setTimeout(refreshAll, 500);
+        }
+
+        // Pull every panel in parallel so the user doesn't have to click
+        // between tabs to see the post-mutation state.
+        function refreshAll() {
+            loadStatus();
+            loadSignals();
+            loadHistory();
         }
         
         // Tab switching

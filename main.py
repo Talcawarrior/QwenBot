@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from config.settings import config
 from config.logging_config import setup_logging
 from database.db import init_db, get_db_session, get_db_session_factory
-from database.models import Portfolio, WeatherMarket, Bet
+from database.models import Portfolio, WeatherMarket, Bet, Analysis
 from engine.strategy import RiskManager, BettingEngine, SIALoop
 from engine.calculator import WeatherEngine
 from executor.settler import SettlementEngine
@@ -452,14 +452,71 @@ async def stop_bot():
 
 @app.post("/api/reset")
 async def reset_bot():
-    """Reset the bot state."""
+    """Reset the bot state and clear in-flight DB rows.
+
+    Stops the bot, then:
+
+    - Sets every open bet's status to 'cancelled' (audit row is
+      preserved; exposure query filters on open_statuses so
+      cancelled bets drop out of the dashboard totals).
+    - Deletes all Analysis rows. They are regenerable on the next
+      scan; keeping them would cause the 'total_signals' counter
+      to remain non-zero after a reset.
+    - Leaves WeatherMarket rows in place — they are the universe
+      of tradable markets and are re-priced on the next scan.
+
+    In-memory state is wiped last so the response uses fresh
+    values. The reset is idempotent: pressing the button twice
+    in a row is a no-op the second time.
+    """
+    # 1. Stop background loops first so they can't race the cleanup
+    #    and re-insert rows we are about to delete.
     await stop_bot()
+
+    # 2. DB cleanup. Use a single session so the changes are atomic.
+    open_statuses = ("active", "open", "placed", "pending")
+    cancelled_bets = 0
+    deleted_analyses = 0
+    db = get_db_session()
+    try:
+        cancelled_bets = (
+            db.query(Bet)
+            .filter(Bet.status.in_(open_statuses))
+            .update({"status": "cancelled"}, synchronize_session=False)
+        )
+        deleted_analyses = (
+            db.query(Analysis)
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.error("reset_bot: DB cleanup failed: %s", exc)
+        raise
+    finally:
+        db.close()
+
+    # 3. In-memory state wipe. The /api/status handler now reads
+    #    Bet/Analysis from the DB, so step 2 already dropped the
+    #    counters to zero; these assignments are belt-and-braces.
     state.locked = False
     state.lock_reason = None
     state.total_signals = 0
     state.total_bets = 0
     state.last_scan = None
-    return {"status": "reset", "message": "Bot sıfırlandı"}
+
+    logger.info(
+        "reset_bot: cancelled %d open bets, deleted %d analyses",
+        cancelled_bets,
+        deleted_analyses,
+    )
+
+    return {
+        "status": "reset",
+        "message": "Bot sıfırlandı",
+        "cancelled_bets": int(cancelled_bets or 0),
+        "deleted_analyses": int(deleted_analyses or 0),
+    }
 
 
 @app.websocket("/ws")

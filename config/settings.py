@@ -49,7 +49,13 @@ class MeteoConfig:
 @dataclass
 class StrategyConfig:
     """Strategy & bankroll metrics."""
-    min_edge: float = 0.03          # Minimum edge (aligned with QwenBot 3%)
+    # Lowered from 0.03 to 0.01 (1%): Polymarket temperature markets
+    # in /public-search almost never produce 3%+ edge because the
+    # market price already discounts the public NWS/Open-Meteo
+    # consensus. 1% is enough to cover bookmaker vig + a thin profit
+    # margin in paper mode. Can be raised back once a private weather
+    # feed (e.g. ECMWF-direct) gives a structural edge.
+    min_edge: float = 0.01
     max_bet_amount: float = 50.0    # Maximum $50 per bet
     min_liquidity: float = 0.0      # Liquidity check disabled: Polymarket public-search
                                     # markets don't expose a `liquidity` field reliably
@@ -82,6 +88,11 @@ class Config:
     MAX_EXPOSURE_PCT = float(os.getenv("MAX_EXPOSURE_PCT", "0.25"))
     MAX_BET_PCT = float(os.getenv("MAX_BET_PCT", "0.03"))
     MIN_BET_SIZE = float(os.getenv("MIN_BET_SIZE", "1.0"))
+    # Fixed dollar amount per bet, set via FLAT_BET_USD env var.
+    # 0.0 (default) means 'use the calculator's Kelly-based recommendation'.
+    # > 0.0 means 'every bet is exactly this many USD, ignore Kelly sizing'.
+    # Risk caps (MAX_BET_PCT, TOTAL_EXPOSURE_PCT, CITY_CAP) still apply on top.
+    FLAT_BET_USD = float(os.getenv("FLAT_BET_USD", "0.0"))
     KELLY_FRACTION = float(os.getenv("KELLY_FRACTION", "0.15"))
     DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", "0.05"))
     CITY_CAP = int(os.getenv("CITY_CAP", "4"))

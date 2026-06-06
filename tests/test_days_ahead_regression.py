@@ -91,6 +91,48 @@ def test_analyze_market_source_uses_min_liquidity_bypass():
     )
 
 
+def test_flat_bet_usd_default_is_disabled():
+    """Config.FLAT_BET_USD defaults to 0.0 (Kelly-based sizing is used)."""
+    from config.settings import Config
+    assert hasattr(Config, "FLAT_BET_USD"), (
+        "Config must expose FLAT_BET_USD so a flat-bet override can be set."
+    )
+    assert float(Config.FLAT_BET_USD) == 0.0, (
+        f"FLAT_BET_USD must default to 0.0, got {Config.FLAT_BET_USD}"
+    )
+
+
+def test_strategy_min_edge_is_lowered_to_one_percent():
+    """The minimum edge threshold was lowered from 3% to 1%.
+
+    Polymarket /public-search temperature markets rarely produce 3%+
+    edge because the public weather consensus is already discounted
+    into the price. With 1% threshold the bot triggers bets on the
+    realistic 1-2.5% edges we observe in production logs.
+    """
+    from config.settings import StrategyConfig
+    assert float(StrategyConfig().min_edge) <= 0.02, (
+        f"StrategyConfig.min_edge should be <= 2% to trigger on real "
+        f"Polymarket data, got {StrategyConfig().min_edge}"
+    )
+
+
+def test_bet_placer_overrides_amount_when_flat_bet_set():
+    """Pin that place_bet replaces recommended_amount when FLAT_BET_USD > 0."""
+    import executor.bet_placer as bp
+    src = inspect.getsource(bp.BetPlacer.place_bet)
+    assert "FLAT_BET_USD" in src, (
+        "place_bet must reference Config.FLAT_BET_USD so the override "
+        "actually fires. Without it the Kelly-based amount wins."
+    )
+    assert "proposed_amount = flat_bet" in src or "proposed_amount = flat_bet_usd" in src or (
+        "flat_bet > 0" in src and "proposed_amount = flat_bet" in src
+    ), (
+        "place_bet must overwrite proposed_amount with the flat value when "
+        "FLAT_BET_USD is set. Look for the assignment to proposed_amount."
+    )
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

@@ -95,6 +95,19 @@ class BetPlacer:
             # ------------------------------------------------------------------
             proposed_amount = float(analysis.recommended_amount or 0.0)
 
+            # Optional flat-bet override: when Config.FLAT_BET_USD > 0,
+            # every bet is exactly that many USD, ignoring Kelly sizing.
+            # Useful for backtests and small-portfolio testing where
+            # Kelly-derived sizes would otherwise be too small to matter.
+            # Risk caps below still apply on top.
+            flat_bet = float(getattr(self.risk_manager.config, "FLAT_BET_USD", 0.0) or 0.0)
+            if flat_bet > 0.0:
+                logger.info(
+                    f"Flat-bet override active: ${flat_bet:.2f} per bet "
+                    f"(was ${proposed_amount:.2f} from Kelly)."
+                )
+                proposed_amount = flat_bet
+
             # Cap 1: per-bet cap (MAX_BET_PCT * portfolio). The engine's
             # Kelly sizing already enforces this in calculator.py, but
             # we re-apply it here as a hard ceiling.
@@ -257,7 +270,12 @@ class BetPlacer:
         for aid in analysis_ids:
             try:
                 bet = self.place_bet(aid)
-                if bet and bet.status == "placed":
+                # place_bet returns a Bet on success and None on rejection.
+                # We can't read `bet.status` here because the Bet is bound
+                # to the session inside place_bet, which is closed by the
+                # time we get back. Trust the return value: any non-None
+                # return means the bet was successfully written.
+                if bet is not None:
                     placed += 1
             except Exception as e:
                 logger.error(f"Bet hatası (analysis {aid}): {e}")

@@ -1,6 +1,6 @@
 """Test the new TTL cache behavior in scrapers/meteo."""
 import time
-from scrapers.meteo import _cache_set, _cache_get, _cache_clear, _FETCH_CACHE
+from scrapers.meteo import _cache_set, _cache_get, _cache_clear
 
 
 def test_cache_set_and_get():

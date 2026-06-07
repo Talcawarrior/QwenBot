@@ -6,7 +6,6 @@ These tests ensure that:
 3. status.total_bets and signals.count are consistent
 """
 
-import json
 import pytest
 
 httpx = pytest.importorskip("httpx", reason="httpx not installed")

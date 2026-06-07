@@ -2,10 +2,10 @@
 QwenBot TAM CANLI TEST (Modular Layout Layout)
 Dashboard, API, WebSocket, Polymarket canlı veri çekme
 """
+# ruff: noqa: E702, E712, E402
 import sys
 import os
 import asyncio
-import json
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -51,7 +51,7 @@ except Exception as e:
 
 try:
     from database.db import init_db, get_db_session
-    from database.models import Portfolio, Market, Bet, ModelPerformance
+    from database.models import Portfolio, Bet
     init_db()
     ok("database.db and models import + init OK")
     track(True)
@@ -119,7 +119,7 @@ track(c.KELLY_FRACTION == 0.15);      ok(f"KELLY_FRACTION = {c.KELLY_FRACTION}")
 track(abs(sum(c.MODEL_WEIGHTS.values()) - 1.0) < 0.001); ok(f"MODEL_WEIGHTS sum = {sum(c.MODEL_WEIGHTS.values()):.4f}")
 track(len(c.CITY_ICAO_MAP) == 38);    ok(f"CITY_ICAO_MAP = {len(c.CITY_ICAO_MAP)} şehir")
 track(c.FEE_DRAG == 0.005);           ok(f"FEE_DRAG = {c.FEE_DRAG}")
-track(c.MIN_EDGE == 0.03);            ok(f"MIN_EDGE = {c.MIN_EDGE}")
+# NOTE: Config.MIN_EDGE removed (see settings.py docstring)
 
 # ───────────────────────────────────────
 header("2. DATABASE TEST")
@@ -175,12 +175,12 @@ async def fetch_live_data():
 
 try:
     live_markets = asyncio.run(fetch_live_data())
-    track(isinstance(live_markets, list)); ok(f"API response type: list")
+    track(isinstance(live_markets, list)); ok("API response type: list")
     track(len(live_markets) > 0);         ok(f"Çekilen market sayısı: {len(live_markets)}")
 
     if live_markets:
         ok("✅✅✅ POLYMARKET CANLI VERİ BAŞARIYLA ÇEKİLDİ ✅✅✅")
-        print(f"\n  İlk 15 canlı market:")
+        print("\n  İlk 15 canlı market:")
         for i, m in enumerate(live_markets[:15]):
             q = m.get("question", "")[:50]
             city = m.get("city", "?")
@@ -365,10 +365,10 @@ header("11. API ENDPOINT TESTLERI (TestClient)")
 r = client.get("/api/status")
 track(r.status_code == 200); ok(f"GET /api/status HTTP {r.status_code}")
 d = r.json()
-track("error" not in d); ok(f"Status JSON valid (no error)")
-track("portfolio" in d); ok(f"portfolio key mevcut")
-track("stats" in d); ok(f"stats key mevcut")
-track("limits" in d); ok(f"limits key mevcut")
+track("error" not in d); ok("Status JSON valid (no error)")
+track("portfolio" in d); ok("portfolio key mevcut")
+track("stats" in d); ok("stats key mevcut")
+track("limits" in d); ok("limits key mevcut")
 track(d["portfolio"]["current"] == 1000.0); ok(f"Portfolio current = ${d['portfolio']['current']}")
 track(d["portfolio"]["smart_pool"] == 400.0); ok(f"Smart pool = ${d['portfolio']['smart_pool']}")
 track(d["limits"]["max_bet_pct"] == 3.0); ok(f"Max bet = {d['limits']['max_bet_pct']}%")
@@ -378,21 +378,21 @@ r = client.get("/api/signals")
 track(r.status_code == 200); ok(f"GET /api/signals HTTP {r.status_code}")
 d = r.json()
 track("count" in d); ok(f"Signals count: {d['count']}")
-track("signals" in d); ok(f"signals array mevcut")
+track("signals" in d); ok("signals array mevcut")
 
 # Markets
 r = client.get("/api/markets")
 track(r.status_code == 200); ok(f"GET /api/markets HTTP {r.status_code}")
 d = r.json()
 track("count" in d); ok(f"Markets count: {d['count']}")
-track("markets" in d); ok(f"markets array mevcut")
+track("markets" in d); ok("markets array mevcut")
 
 # History
 r = client.get("/api/history")
 track(r.status_code == 200); ok(f"GET /api/history HTTP {r.status_code}")
 d = r.json()
-track("history" in d); ok(f"history array mevcut")
-track("stats" in d); ok(f"stats mevcut")
+track("history" in d); ok("history array mevcut")
+track("stats" in d); ok("stats mevcut")
 
 # POST Start
 r = client.post("/api/start")
@@ -434,7 +434,7 @@ print(f"  Başarısız:      {TOTAL_FAIL}")
 print(f"  Success Rate:   {pct:.1f}%")
 
 if TOTAL_FAIL == 0:
-    print(f"\n  🎉 TÜM TESTLER BAŞARILI - SIFIR HATA!")
+    print("\n  🎉 TÜM TESTLER BAŞARILI - SIFIR HATA!")
 else:
     print(f"\n  ⚠️  {TOTAL_FAIL} başarısız test var")
 

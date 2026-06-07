@@ -47,8 +47,9 @@ def run_analyze():
 
     for mid in market_ids:
         try:
-            calc.analyze_market(mid)
-            analyzed += 1
+            result = calc.analyze_market(mid)
+            if result is not None:
+                analyzed += 1
         except Exception as e:
             logger.error(f"Analiz hatası {mid}: {e}")
             continue

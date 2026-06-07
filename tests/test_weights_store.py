@@ -1,9 +1,7 @@
 ﻿"""SIA weight persistence: load on init, save on optimize, no-spam threshold."""
 
 import os
-import tempfile
 
-import pytest
 
 
 def test_load_returns_none_when_file_missing(tmp_path, monkeypatch):

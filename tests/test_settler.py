@@ -1,6 +1,5 @@
 """Test cases for SettlementEngine."""
 
-import pytest
 from executor.settler import SettlementEngine
 
 

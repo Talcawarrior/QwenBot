@@ -94,6 +94,13 @@ class MeteoFetcher:
         "tokyo": (35.5533, 139.7811),
         "jinan": (36.8572, 116.2169),
         "zhengzhou": (34.5197, 113.8408),
+        "taipei": (25.0330, 121.5654),
+        "singapore": (1.3521, 103.8198),
+        "munich": (48.1351, 11.5820),
+        "toronto": (43.6532, -79.3832),
+        "san francisco": (37.7749, -122.4194),
+        "buenos aires": (-34.6037, -58.3816),
+        "tel aviv": (32.0853, 34.7818),
     }
 
     @retry(max_attempts=3, delay=3, exceptions=(requests.RequestException,))

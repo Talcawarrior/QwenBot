@@ -16,7 +16,6 @@ These tests pin both behaviors so they cannot regress silently.
 
 import sys
 import inspect
-from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, ".")
 

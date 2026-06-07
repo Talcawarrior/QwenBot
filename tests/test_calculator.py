@@ -1,6 +1,5 @@
 """Test cases for WeatherEngine calculator."""
 
-import pytest
 from engine.calculator import WeatherEngine
 
 

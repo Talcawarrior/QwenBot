@@ -62,6 +62,24 @@ class StrategyConfig:
                                     # (it's always 0). The current_price already reflects
                                     # real market depth.
     kelly_fraction: float = 0.15    # Quarter/Fractional Kelly (aligned with QwenBot 15%)
+    # Time-to-close edge escalation. As a market approaches its
+    # resolution time, Polymarket prices move fast on the public
+    # weather consensus and forecast uncertainty is already low.
+    # We demand a stronger edge in the last N hours before close
+    # so the bot is less willing to take a late bet at a thin edge.
+    # Linear ramp: 1x min_edge at edge_escalation_hours, then
+    # ramps to edge_escalation_multiplier * min_edge at 0h.
+    edge_escalation_hours: int = 24
+    edge_escalation_multiplier: float = 2.0
+    # Time-to-close edge escalation. As a market approaches its
+    # resolution time, Polymarket prices move fast on the public
+    # weather consensus and forecast uncertainty is already low.
+    # We demand a stronger edge in the last N hours before close
+    # so the bot is less willing to take a late bet at a thin edge.
+    # Linear ramp: 1x min_edge at edge_escalation_hours, then
+    # ramps to edge_escalation_multiplier * min_edge at 0h.
+    edge_escalation_hours: int = 24
+    edge_escalation_multiplier: float = 2.0
     min_sources: int = 1            # En az 1 hava kaynaÄŸÄ± (aligned for Open-Meteo free tier)
     # Bot scope: today + 1 + 2 days ahead (0..2 inclusive).
     # Tightened from 14 to 2 so the bot only trades near-term markets

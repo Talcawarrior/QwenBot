@@ -173,8 +173,9 @@ class Calculator:
                 (market.liquidity or 0) >= bot_config.strategy.min_liquidity
                 or bot_config.strategy.min_liquidity <= 0
             )
+            effective_min_edge = self._compute_effective_min_edge(market)
             should_bet = (
-                abs(edge) >= bot_config.strategy.min_edge
+                abs(edge) >= effective_min_edge
                 and len(forecast_values) >= bot_config.strategy.min_sources
                 and 0 <= days_ahead <= bot_config.strategy.max_days_ahead
                 and liquidity_ok
@@ -182,7 +183,7 @@ class Calculator:
             )
 
             reason_parts = []
-            if abs(edge) < bot_config.strategy.min_edge:
+            if abs(edge) < effective_min_edge:
                 reason_parts.append(f"Edge dÃ¼ÅŸÃ¼k: {edge:.2%}")
             if len(forecast_values) < bot_config.strategy.min_sources:
                 reason_parts.append(f"Az kaynak: {len(forecast_values)}")
@@ -249,6 +250,46 @@ class WeatherEngine:
         self.config = cfg or config
         self.session: Optional[aiohttp.ClientSession] = None
         self.model_weights = self.config.get_normalized_weights()
+
+    @staticmethod
+    def _compute_effective_min_edge(market) -> float:
+        """Return the time-to-close-scaled min_edge for market.
+
+        Linearly ramps from 1x bot_config.strategy.min_edge at
+        edge_escalation_hours before resolution to
+        edge_escalation_multiplier * min_edge at the moment of close.
+        Clamps to the multiplier if we are already past resolution, and
+        never divides by zero.
+        """
+        s = bot_config.strategy
+        try:
+            resolution = (
+                getattr(market, 'resolution_date', None)
+                or getattr(market, 'target_date', None)
+            )
+            if resolution is None:
+                return s.min_edge
+            now = datetime.now(timezone.utc)
+            if getattr(resolution, 'tzinfo', None) is None:
+                resolution = resolution.replace(tzinfo=timezone.utc)
+            hours_left = (resolution - now).total_seconds() / 3600.0
+        except Exception:
+            return s.min_edge
+
+        # 60s tolerance for the boundary: a market created with
+        # resolution_date=now+esc_h drifts microseconds by the time the
+        # function runs, producing 0.01+1e-9 on CI. A 1-minute window
+        # makes the boundary deterministic.
+        if hours_left >= s.edge_escalation_hours - (60.0 / 3600.0):
+            return s.min_edge
+        if hours_left <= 0:
+            return s.min_edge * s.edge_escalation_multiplier
+        esc_h = max(1, s.edge_escalation_hours)
+        fraction = hours_left / esc_h
+        return s.min_edge * (
+            1.0 + (s.edge_escalation_multiplier - 1.0) * (1.0 - fraction)
+        )
+
 
     async def start(self):
         if self.session is None:

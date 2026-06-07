@@ -5,6 +5,7 @@ import logging
 from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import func
+from utils.kelly import kelly_bet_amount
 from config.settings import config, bot_config
 from database.models import Bet, Portfolio, ModelPerformance
 
@@ -87,30 +88,21 @@ class RiskManager:
             self.city_bet_counts[city_code] = max(0, self.city_bet_counts[city_code] - 1)
 
     def calculate_kelly_bet_size(self, model_prob: float, market_price: float) -> float:
-        """Calculate Kelly bet sizing."""
-        if model_prob <= 0 or market_price <= 0 or market_price >= 1:
-            return 0.0
+        """Calculate Kelly bet sizing.
 
-        if model_prob >= 1.0:
-            model_prob = 0.99
-
-        b = (1 - market_price) / market_price
-        p = model_prob
-        q = 1 - p
-
-        kelly_fraction = (b * p - q) / b if b > 0 else 0
-        fractional_kelly = kelly_fraction * self.config.KELLY_FRACTION
-
-        if fractional_kelly <= 0:
-            return 0.0
-
-        bet_amount = self.portfolio_value * fractional_kelly
-        bet_amount = max(bet_amount, self.config.MIN_BET_SIZE)
-
-        max_bet = self.portfolio_value * self.config.MAX_BET_PCT
-        bet_amount = min(bet_amount, max_bet)
-
-        return round(bet_amount, 2)
+        Thin wrapper over utils.kelly.kelly_bet_amount so the math
+        lives in one place. Bankroll comes from self.portfolio_value,
+        which the portfolio-sync hook refreshes after every settlement
+        cycle (PR #9).
+        """
+        return kelly_bet_amount(
+            self.portfolio_value,
+            model_prob,
+            market_price,
+            fraction=self.config.KELLY_FRACTION,
+            min_bet=self.config.MIN_BET_SIZE,
+            max_bet_pct=self.config.MAX_BET_PCT,
+        )
 
     def check_exposure_cap(self, current_exposure: float, additional_bet: float) -> bool:
         """Check total exposure cap limit."""

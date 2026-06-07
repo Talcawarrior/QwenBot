@@ -714,6 +714,24 @@ async def settlement_loop():
                     logger.info("SIA loop ran (next in %sh)", state.sia_interval_hours)
             except Exception as sia_err:
                 logger.error("SIA loop error: %s", sia_err, exc_info=True)
+            # Portfolio sync: RiskManager keeps portfolio_value in memory
+            # so Kelly bet sizing has a fresh bankroll, but the settler
+            # mutates Portfolio.total_value in the DB on every WIN/LOSS.
+            # Without this hook the two drift: the bot keeps sizing
+            # bets off a stale INITIAL_PORTFOLIO-based number and the
+            # dashboard reports different PnL than the next bet uses.
+            # PR review fix #8: refresh from DB after every settlement
+            # cycle. Read-only and fast (~1 row).
+            try:
+                from database.db import get_db_session
+                from database.models import Portfolio
+                with get_db_session() as db:
+                    pf = db.query(Portfolio).filter(Portfolio.id == 1).first()
+                    if pf is not None and pf.total_value is not None:
+                        if state.risk_manager is not None:
+                            state.risk_manager.update_portfolio(float(pf.total_value))
+            except Exception as sync_err:
+                logger.warning('Portfolio sync skipped: %s', sync_err)
             await asyncio.to_thread(run_settle)
         except Exception as e:
             logger.error("Settlement loop cycle error: %s", e, exc_info=True)

@@ -8,18 +8,17 @@ Covers AsyncHttpClient behavior independent of upstream API state:
 - requests fallback when aiohttp is missing (simulated via import hook)
 - PolymarketScraper _fetch_raw_markets uses AsyncHttpClient
 """
-import sys
-import types
 import pytest
 
-aiohttp = pytest.importorskip("aiohttp")  # skip on minimal CI
-
-from scrapers.async_client import (
+from scrapers.async_client import (  # noqa: E402
     AsyncHttpClient,
     cache_clear,
     MAX_CONCURRENT,
     _THROTTLE_S,
 )
+
+# Skip the whole module on minimal CI without aiohttp.
+pytest.importorskip("aiohttp")
 
 
 @pytest.fixture(autouse=True)

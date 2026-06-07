@@ -180,7 +180,7 @@ class MarketParser:
                 # whitespace), not a literal space, so detect it by checking
                 # the pattern start instead of substring.
                 if pattern.startswith(r"\bon") or pattern.startswith("on") or "on " in pattern:
-                    date_str = f"{date_str} 2026"
+                    date_str = f"{date_str} {datetime.now().year}"
                 for fmt in ["%B %d, %Y", "%B %d %Y", "%Y-%m-%d", "%m/%d/%Y", "%B %d %Y"]:
                     try:
                         d = datetime.strptime(date_str.strip(), fmt)

@@ -1,8 +1,8 @@
-﻿"""Settlement checking and executing paper/live payout calculations."""
+"""Settlement checking and executing paper/live payout calculations."""
 
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 from database.db import get_session
 from database.models import Bet, WeatherMarket, Portfolio, Market
 
@@ -36,20 +36,20 @@ class Settler:
             if not market:
                 return None
 
-            # Tarih henÃ¼z gelmedi mi?
-            if market.target_date and market.target_date > datetime.utcnow():
+            # Tarih henüz gelmedi mi?
+            if market.target_date and market.target_date > datetime.now(timezone.utc).replace(tzinfo=None):
                 return None
 
-            # GerÃ§ek hava verisini Ã§ek (geÃ§miÅŸ veri)
+            # Gerçek hava verisini çek (geçmiş veri)
             actual = self._get_actual_weather(market)
 
             if actual is None:
-                logger.warning(f"GerÃ§ek veri bulunamadÄ±: {market.id}")
+                logger.warning(f"Gerçek veri bulunamadı: {market.id}")
                 return None
 
             bet.actual_value = actual
 
-            # SonuÃ§ belirleme
+            # Sonuç belirleme
             threshold_exceeded = actual > market.threshold
 
             if (bet.side == "YES" and threshold_exceeded) or \
@@ -64,7 +64,7 @@ class Settler:
                 market.status = "settled_loss"
                 result = "LOSS"
 
-            bet.settled_at = datetime.utcnow()
+            bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
             # Update portfolio with correct cash accounting:
             # - WIN:  credit full payout (stake was already deducted at placement)
@@ -94,7 +94,7 @@ class Settler:
             return result
 
     def _get_actual_weather(self, market) -> float | None:
-        """GeÃ§miÅŸ hava verisini Ã§ek."""
+        """Geçmiş hava verisini çek."""
         try:
             lat, lon = self._get_coords(market.city)
             date_str = market.target_date.strftime("%Y-%m-%d")
@@ -131,7 +131,7 @@ class Settler:
             return None
 
         except Exception as e:
-            logger.error(f"GerÃ§ek veri Ã§ekme hatasÄ±: {e}")
+            logger.error(f"Gerçek veri çekme hatası: {e}")
             return None
 
     def _get_coords(self, city: str) -> tuple:
@@ -140,7 +140,7 @@ class Settler:
         return coords if coords else (40.7128, -74.0060)
 
     def settle_all(self) -> dict:
-        """TÃ¼m bekleyen betleri kontrol et."""
+        """Tüm bekleyen betleri kontrol et."""
         results = {"win": 0, "loss": 0, "pending": 0}
         with get_session() as session:
             placed_bets = session.query(Bet).filter(
@@ -158,7 +158,7 @@ class Settler:
                 else:
                     results["pending"] += 1
             except Exception as e:
-                logger.error(f"Settlement hatasÄ± (bet {bid}): {e}")
+                logger.error(f"Settlement hatası (bet {bid}): {e}")
                 results["pending"] += 1
                 continue
 
@@ -197,7 +197,7 @@ class SettlementEngine:
 
         bet.status = status
         bet.realized_pnl = realized_pnl
-        bet.settled_at = datetime.utcnow()
+        bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
         return {"status": status, "realized_pnl": realized_pnl}
 
     def update_portfolio_after_settlement(self, portfolio, pnl: float, is_win: bool):
@@ -210,7 +210,8 @@ class SettlementEngine:
         # total_value and current_value are set in the caller based on cash_balance
 
     async def settle_bets(self):
-        return self.settler.settle_all().get("win", 0) + self.settler.settle_all().get("loss", 0)
+        results = self.settler.settle_all()
+        return results.get("win", 0) + results.get("loss", 0)
 
     async def update_market_prices(self):
         pass

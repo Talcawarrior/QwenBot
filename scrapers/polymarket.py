@@ -4,7 +4,7 @@ import json
 import logging
 import requests
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from database.db import get_session
 from database.models import WeatherMarket
@@ -45,11 +45,23 @@ class PolymarketScraper:
         """
         from datetime import timedelta
         from urllib.parse import urlparse
-        today = datetime.utcnow()
-        date_strs = [
-            (today + timedelta(days=i)).strftime("%B %#d")
-            for i in range(3)
-        ]
+        today = datetime.now(timezone.utc).replace(tzinfo=None)
+        # Generate date strings in multiple formats to match Polymarket titles
+        # which use "June 7" (no zero-pad), "June 07" (zero-pad), or "Jun 7".
+        import calendar
+        date_strs = []
+        for i in range(3):
+            d = today + timedelta(days=i)
+            month_name = calendar.month_name[d.month]    # "June"
+            month_abbr = calendar.month_abbr[d.month]    # "Jun"
+            day_no_pad = str(d.day)                       # "7"
+            day_zero_pad = f"{d.day:02d}"                 # "07"
+            date_strs.extend([
+                f"{month_name} {day_no_pad}",     # "June 7"
+                f"{month_name} {day_zero_pad}",   # "June 07"
+                f"{month_abbr} {day_no_pad}",     # "Jun 7"
+                f"{month_abbr} {day_zero_pad}",   # "Jun 07"
+            ])
 
         queries = [
             "highest temperature", "lowest temperature",
@@ -247,7 +259,7 @@ class PolymarketScraper:
                         existing.volume = parsed["volume"]
                         existing.liquidity = parsed["liquidity"]
                         existing.city = parsed["city"]
-                        existing.last_updated = datetime.utcnow()
+                        existing.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
                         existing.raw_data = parsed["raw_data"]
                     else:
                         market = WeatherMarket(
@@ -258,8 +270,8 @@ class PolymarketScraper:
                             volume=parsed["volume"],
                             liquidity=parsed["liquidity"],
                             city=parsed["city"],
-                            first_seen=datetime.utcnow(),
-                            last_updated=datetime.utcnow(),
+                            first_seen=datetime.now(timezone.utc).replace(tzinfo=None),
+                            last_updated=datetime.now(timezone.utc).replace(tzinfo=None),
                             raw_data=parsed["raw_data"],
                             status="open"
                         )

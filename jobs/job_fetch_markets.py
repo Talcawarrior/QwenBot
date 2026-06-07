@@ -4,7 +4,7 @@ import logging
 from scrapers.polymarket import PolymarketScraper
 from database.db import get_db_session
 from database.models import Market
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger("JOB_FETCH_MARKETS")
 
@@ -20,7 +20,7 @@ async def run():
             return 0
 
         # Filter out past/expired markets safely
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         filtered_markets = []
         for m in markets:
             res_date = m.get("resolution_date")

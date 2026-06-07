@@ -4,7 +4,7 @@ import logging
 import requests
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from database.db import get_session
 from database.models import WeatherMarket, WeatherForecast
 from config.settings import config, bot_config
@@ -228,7 +228,7 @@ class MeteoFetcher:
                             metric=metric,
                             source=source_name,
                             predicted_value=predicted_value,
-                            fetched_at=datetime.utcnow(),
+                            fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
                             raw_data=str(result)
                         )
                         session.add(forecast)

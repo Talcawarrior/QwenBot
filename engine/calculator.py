@@ -1,4 +1,4 @@
-﻿"""Matematiksel olasÄ±lÄ±k, Kelly kriteri hesaplayÄ±cÄ±sÄ± ve WeatherEngine konsensÃ¼s birleÅŸimi."""
+﻿"""Matematiksel olasılık, Kelly kriteri hesaplayıcısı ve WeatherEngine konsensüs birleşimi."""
 
 import math
 import logging
@@ -24,7 +24,7 @@ class Calculator:
 
     def estimate_probability(self, forecasts: List[float], threshold: float, days_ahead: int) -> float:
         """
-        Tahmin deÄŸerlerinden, eÅŸik aÅŸÄ±lma olasÄ±lÄ±ÄŸÄ±nÄ± hesapla.
+        Tahmin değerlerinden, eşik aşılma olasılığını hesapla.
         P(X > threshold) hesapla.
         """
         if not forecasts:
@@ -103,7 +103,7 @@ class Calculator:
         with get_session() as session:
             market = session.query(WeatherMarket).filter_by(id=market_id).first()
             if not market:
-                logger.warning(f"Market bulunamadÄ±: {market_id}")
+                logger.warning(f"Market bulunamadı: {market_id}")
                 return None
 
             if not all([market.city, market.threshold, market.target_date, market.metric]):
@@ -111,7 +111,7 @@ class Calculator:
                 return None
 
             # Skip already-resolved markets (lookahead bias guard)
-            if market.target_date <= datetime.utcnow():
+            if market.target_date <= datetime.now(timezone.utc).replace(tzinfo=None):
                 logger.debug(f"Market {market_id}: target_date {market.target_date} already passed, skipping")
                 return None
 
@@ -144,10 +144,10 @@ class Calculator:
 
             # days_ahead: use calendar days (>=0) and treat "today" as 1 day
             # so that (target_date=23:59:59, now=04:21) -> 0 still means "today".
-            days_ahead = (market.target_date - datetime.utcnow()).days
+            days_ahead = (market.target_date - datetime.now(timezone.utc).replace(tzinfo=None)).days
             days_ahead_for_check = max(days_ahead, 1)
 
-            # OlasÄ±lÄ±k hesapla
+            # Olasılık hesapla
             estimated_prob = self.estimate_probability(
                 forecast_values, market.threshold, days_ahead_for_check
             )
@@ -156,14 +156,14 @@ class Calculator:
             edge = estimated_prob - market_implied
 
             if edge > 0:
-                # YES tarafÄ±
+                # YES tarafı
                 kelly_frac = self.kelly_criterion(
                     estimated_prob, market_implied,
                     bot_config.strategy.kelly_fraction
                 )
                 recommended_side = "YES"
             else:
-                # NO tarafÄ±
+                # NO tarafı
                 no_prob = 1 - estimated_prob
                 no_implied = market.no_price or (1 - market_implied)
                 no_edge = no_prob - no_implied
@@ -179,20 +179,20 @@ class Calculator:
                     kelly_frac = 0
                     recommended_side = None
 
-            # Bet miktarÄ±
+            # Bet miktarı
             recommended_amount = min(
-                kelly_frac * 1000,  # VarsayÄ±lan bankroll $1000
+                kelly_frac * 1000,  # Varsayılan bankroll $1000
                 bot_config.strategy.max_bet_amount
             )
 
-            # Bet aÃ§Ä±lmalÄ± mÄ±?
+            # Bet açılmalı mı?
             # NOTE: Polymarket'te public-search'ten gelen marketlerin
-            # `liquidity` alanÄ± genelde 0 (price bize zaten gerÃ§ek bilgi veriyor),
-            # bu yÃ¼zden likidite kontrolÃ¼nÃ¼ kaldÄ±rÄ±yoruz â€” gerÃ§ek piyasa sinyali
-            # `volume` veya `volume24hr` alanlarÄ±ndan biridir; bunlar da yoksa
-            # `current_price` zaten likiditeyi yansÄ±tÄ±r.
-            # Yine de kullanÄ±cÄ± isterse `bot_config.strategy.min_liquidity`
-            # deÄŸerini 0 yaparak bunu bypass edebilir.
+            # `liquidity` alanı genelde 0 (price bize zaten gerçek bilgi veriyor),
+            # bu yüzden likidite kontrolünü kaldırıyoruz "” gerçek piyasa sinyali
+            # `volume` veya `volume24hr` alanlarından biridir; bunlar da yoksa
+            # `current_price` zaten likiditeyi yansıtır.
+            # Yine de kullanıcı isterse `bot_config.strategy.min_liquidity`
+            # değerini 0 yaparak bunu bypass edebilir.
             liquidity_ok = (
                 (market.liquidity or 0) >= bot_config.strategy.min_liquidity
                 or bot_config.strategy.min_liquidity <= 0
@@ -208,13 +208,13 @@ class Calculator:
 
             reason_parts = []
             if abs(edge) < effective_min_edge:
-                reason_parts.append(f"Edge dÃ¼ÅŸÃ¼k: {edge:.2%}")
+                reason_parts.append(f"Edge düşük: {edge:.2%}")
             if len(forecast_values) < bot_config.strategy.min_sources:
                 reason_parts.append(f"Az kaynak: {len(forecast_values)}")
             if days_ahead > bot_config.strategy.max_days_ahead:
-                reason_parts.append(f"Ã‡ok uzak: {days_ahead} gÃ¼n")
+                reason_parts.append(f"Ã‡ok uzak: {days_ahead} gün")
             if (market.liquidity or 0) < bot_config.strategy.min_liquidity:
-                reason_parts.append(f"DÃ¼ÅŸÃ¼k likidite: ${market.liquidity}")
+                reason_parts.append(f"Düşük likidite: ${market.liquidity}")
 
             if not reason_parts:
                 reason = f"BET AÃ‡! Edge={edge:.2%}, Side={recommended_side}"
@@ -242,7 +242,7 @@ class Calculator:
                 confidence_score=min(len(forecast_values) / 5, 1.0),
                 should_bet=should_bet,
                 reason=reason,
-                analyzed_at=datetime.utcnow(),
+                analyzed_at=datetime.now(timezone.utc).replace(tzinfo=None),
             )
             session.add(analysis)
             logger.info(
@@ -374,7 +374,7 @@ class WeatherEngine:
         if not city_code or (latitude == 0 and longitude == 0):
             return None
         if target_date is None:
-            target_date = datetime.utcnow()
+            target_date = datetime.now(timezone.utc).replace(tzinfo=None)
 
         api_model_names = []
         for internal_name in self.model_weights.keys():
@@ -441,7 +441,7 @@ class WeatherEngine:
                     "weighted_std": weighted_std,
                     "model_count": len(model_temps),
                     "model_temps": model_temps,
-                    "timestamp": datetime.utcnow(),
+                    "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
                 }
         except Exception:
             return None

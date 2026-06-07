@@ -18,18 +18,35 @@ logger = logging.getLogger("SCRAPER_METEO")
 # Avoids hammering the upstream APIs when many markets share the same
 # (city, target_date) tuple (e.g., 11 Polymarket threshold markets for
 # "London 2026-06-08" all need the same Open-Meteo forecast).
-_FETCH_CACHE: dict[tuple[float, float, str, str], dict | None] = {}
+_FETCH_CACHE: dict[tuple[float, float, str, str], tuple] = {}
 _FETCH_CACHE_LOCK = threading.Lock()
 
+# Successes live for 30 minutes; failures for 5 minutes. The original
+# cache remembered failures for the lifetime of the process, which
+# made the scraper silently stop working after the first 429 hit: the
+# (lat, lon, date, source) tuple was stored as None and every later
+# call returned the cached failure forever. With TTL the bot recovers
+# on its own and only re-issues requests every few minutes.
+_SUCCESS_TTL_S = 30.0 * 60.0
+_FAILURE_TTL_S = 5.0 * 60.0
 
-def _cache_get(key: tuple[float, float, str, str]):
+
+def _cache_get(key):
     with _FETCH_CACHE_LOCK:
-        return _FETCH_CACHE.get(key)
+        entry = _FETCH_CACHE.get(key)
+        if entry is None:
+            return None
+        value, expires_at = entry
+        if time.monotonic() > expires_at:
+            _FETCH_CACHE.pop(key, None)
+            return None
+        return value
 
 
-def _cache_set(key: tuple[float, float, str, str], value):
+def _cache_set(key, value):
     with _FETCH_CACHE_LOCK:
-        _FETCH_CACHE[key] = value
+        ttl = _SUCCESS_TTL_S if value is not None else _FAILURE_TTL_S
+        _FETCH_CACHE[key] = (value, time.monotonic() + ttl)
 
 
 def _cache_clear() -> None:

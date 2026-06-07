@@ -374,7 +374,7 @@ class WeatherEngine:
         if not city_code or (latitude == 0 and longitude == 0):
             return None
         if target_date is None:
-            target_date = datetime.now(timezone.utc)
+            target_date = datetime.utcnow()
 
         api_model_names = []
         for internal_name in self.model_weights.keys():
@@ -441,7 +441,7 @@ class WeatherEngine:
                     "weighted_std": weighted_std,
                     "model_count": len(model_temps),
                     "model_temps": model_temps,
-                    "timestamp": datetime.now(timezone.utc),
+                    "timestamp": datetime.utcnow(),
                 }
         except Exception:
             return None

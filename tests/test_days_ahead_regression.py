@@ -92,13 +92,13 @@ def test_analyze_market_source_uses_min_liquidity_bypass():
 
 
 def test_flat_bet_usd_default_is_disabled():
-    """Config.FLAT_BET_USD defaults to 0.0 (Kelly-based sizing is used)."""
+    """Config.FLAT_BET_USD defaults to 10.0 (flat bet per README)."""
     from config.settings import Config
     assert hasattr(Config, "FLAT_BET_USD"), (
         "Config must expose FLAT_BET_USD so a flat-bet override can be set."
     )
-    assert float(Config.FLAT_BET_USD) == 0.0, (
-        f"FLAT_BET_USD must default to 0.0, got {Config.FLAT_BET_USD}"
+    assert float(Config.FLAT_BET_USD) == 10.0, (
+        f"FLAT_BET_USD must default to 10.0, got {Config.FLAT_BET_USD}"
     )
 
 

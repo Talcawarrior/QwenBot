@@ -1,6 +1,7 @@
 """Bet placement executor making paper or live trades on Polymarket."""
 
 import json
+import os
 import logging
 from datetime import datetime, timezone
 from sqlalchemy import func
@@ -88,7 +89,7 @@ class BetPlacer:
             # Zaten bet açılmış mı?
             existing = session.query(Bet).filter(
                 Bet.market_id == analysis.market_id,
-                Bet.status.in_(["pending", "placed"])
+                Bet.status.in_(self._OPEN_STATUSES)
             ).first()
             if existing:
                 logger.info(f"Market {market.id} already has a bet")
@@ -233,8 +234,34 @@ class BetPlacer:
 
             bet.potential_payout = bet.amount / bet.price if bet.price > 0 else 0
 
+            # Paper ladder: if edge >= 0.05, create a 3-level ladder
+            ladder_orders = []
+            edge_val = float(analysis.edge or 0.0)
+            if abs(edge_val) >= 0.05:
+                for lvl, pct in [(1, 0.50), (2, 0.30), (3, 0.20)]:
+                    lvl_amount = round(proposed_amount * pct, 2)
+                    if lvl == 1:
+                        lvl_price = fill_price
+                    elif lvl == 2:
+                        lvl_price = fill_price * 0.98
+                    else:
+                        lvl_price = fill_price * 0.95
+                    # Clamp price to [0.01, 0.99]
+                    lvl_price = max(0.01, min(0.99, round(lvl_price, 4)))
+                    lvl_shares = round(lvl_amount / lvl_price, 4) if lvl_price > 0 else 0.0
+                    ladder_orders.append({
+                        "level": lvl,
+                        "price": lvl_price,
+                        "amount": lvl_amount,
+                        "shares": lvl_shares,
+                        "status": "paper_filled",
+                    })
+            bet.ladder_data = json.dumps(ladder_orders) if ladder_orders else "[]"
+
             # Live vs Paper execution logic
-            if self.ready and not Config.DRY_RUN:
+            # HARD GUARD: always paper unless LIVE_TRADING_ENABLED=true
+            _live_allowed = (not Config.DRY_RUN) and os.getenv("LIVE_TRADING_ENABLED", "false").lower() == "true"
+            if self.ready and _live_allowed:
                 try:
                     from py_clob_client.order_builder.constants import BUY
 
@@ -301,14 +328,22 @@ class BetPlacer:
             ).all()
             analysis_ids = [a.id for a in pending]
 
+            # Dedup: skip analysis_ids that already have ANY Bet record
+            processed = set()
+            if analysis_ids:
+                existing_rows = (
+                    session.query(Bet.analysis_id)
+                    .filter(Bet.analysis_id.in_(analysis_ids))
+                    .all()
+                )
+                processed = {row[0] for row in existing_rows if row[0] is not None}
+
         for aid in analysis_ids:
+            if aid in processed:
+                logger.debug("Analysis %d already has a bet, skipping", aid)
+                continue
             try:
                 bet = self.place_bet(aid)
-                # place_bet returns a Bet on success and None on rejection.
-                # We can't read `bet.status` here because the Bet is bound
-                # to the session inside place_bet, which is closed by the
-                # time we get back. Trust the return value: any non-None
-                # return means the bet was successfully written.
                 if bet is not None:
                     placed += 1
             except Exception as e:

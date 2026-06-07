@@ -6,6 +6,7 @@ MAIN SERVER - FastAPI + WebSocket + Command Line Interface (CLI)
 """
 
 import os
+import json
 import argparse
 import asyncio
 import logging
@@ -322,7 +323,7 @@ async def get_signals():
                     "entry_edge": entry_edge, # UX fix #6: edge at the time of entry
                     "live_edge": live_edge,   # explicit alias for clarity
                     "move_pct": move_pct,     # UX fix #6: (current âˆ’ entry) / entry
-                    "ladder_orders": [],
+                    "ladder_orders": (lambda: (json.loads(b.ladder_data) if isinstance(b.ladder_data, str) and b.ladder_data.strip().startswith('[') else []) if b.ladder_data else [])(),
                     "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
                     "resolution_date": res_date.isoformat() if res_date else None,
                     "status": bet.status if bet.status else "UNKNOWN",
@@ -477,6 +478,55 @@ async def get_history():
         }
     except Exception as e:
         return {"error": str(e), "history": []}
+    finally:
+        db.close()
+
+
+
+@app.get("/api/bets")
+async def get_bets():
+    """Get all bets (last 100) for the bets table."""
+    db = get_db_session()
+    try:
+        bets = (
+            db.query(Bet)
+            .order_by(Bet.id.desc())
+            .limit(100)
+            .all()
+        )
+        result = []
+        for b in bets:
+            ladder = []
+            if b.ladder_data:
+                try:
+                    if isinstance(b.ladder_data, str):
+                        ladder = json.loads(b.ladder_data)
+                    else:
+                        ladder = b.ladder_data
+                except (json.JSONDecodeError, TypeError):
+                    ladder = []
+            result.append({
+                "id": b.id,
+                "market_id": b.market_id,
+                "city": b.city or "",
+                "side": b.side or "",
+                "amount": b.amount or 0.0,
+                "price": b.price or 0.0,
+                "entry_price": b.entry_price,
+                "current_price": b.current_price,
+                "shares": b.shares,
+                "status": b.status or "",
+                "pnl": b.pnl or 0.0,
+                "realized_pnl": b.realized_pnl or 0.0,
+                "unrealized_pnl": b.unrealized_pnl or 0.0,
+                "ladder_data": ladder,
+                "placed_at": b.placed_at.isoformat() if b.placed_at else None,
+                "settled_at": b.settled_at.isoformat() if b.settled_at else None,
+                "error_message": b.error_message,
+            })
+        return {"bets": result, "count": len(result)}
+    except Exception as e:
+        return {"error": str(e), "bets": [], "count": 0}
     finally:
         db.close()
 
@@ -757,6 +807,7 @@ def run_cli():
         "bet",
         "settle",
         "report",
+        "reset",
         "test"
     ])
     args = parser.parse_args()
@@ -794,6 +845,38 @@ def run_cli():
                     logger.info(f"  {name}: {result}")
                 except Exception as e:
                     logger.error(f"  {name}: HATA - {e}")
+    elif args.command == "reset":
+        # CLI reset: cancel open bets, reset portfolio, delete analyses
+        from database.models import Portfolio as PortfolioModel, Analysis as AnalysisModel
+        open_statuses = ("active", "open", "placed", "pending")
+        db = get_db_session()
+        try:
+            cancelled = (
+                db.query(Bet)
+                .filter(Bet.status.in_(open_statuses))
+                .update({"status": "cancelled"}, synchronize_session=False)
+            )
+            deleted = (
+                db.query(AnalysisModel)
+                .delete(synchronize_session=False)
+            )
+            pf = db.query(PortfolioModel).filter(PortfolioModel.id == 1).first()
+            if pf:
+                pf.cash_balance = state.config.INITIAL_PORTFOLIO
+                pf.current_value = state.config.INITIAL_PORTFOLIO
+                pf.total_value = state.config.INITIAL_PORTFOLIO
+                pf.initial_value = state.config.INITIAL_PORTFOLIO
+                pf.daily_pnl = 0.0
+                pf.total_realized_pnl = 0.0
+                pf.total_won = 0
+                pf.total_lost = 0
+            db.commit()
+            print(f"Reset complete: cancelled {cancelled} bets, deleted {deleted} analyses, portfolio reset to ${state.config.INITIAL_PORTFOLIO}")
+        except Exception as e:
+            db.rollback()
+            print(f"Reset failed: {e}")
+        finally:
+            db.close()
     else:
         result = commands[args.command]()
         print(result)

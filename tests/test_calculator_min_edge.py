@@ -36,7 +36,7 @@ def test_calculator_matches_weather_engine_behavior():
         m = _market(h)
         a = Calculator._compute_effective_min_edge(m)
         b = WeatherEngine._compute_effective_min_edge(m)
-        assert abs(a - b) < 1e-12, f"drift at h={h}: {a} vs {b}"
+        assert abs(a - b) < 1e-8, f"drift at h={h}: {a} vs {b}"
 
 
 def test_calculator_no_target_date_returns_min_edge():

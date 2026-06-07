@@ -8,6 +8,7 @@ from datetime import datetime
 from database.db import get_session
 from database.models import WeatherMarket, WeatherForecast
 from config.settings import config, bot_config
+from scrapers.async_client import AsyncHttpClient
 from utils.retry import retry
 
 logger = logging.getLogger("SCRAPER_METEO")
@@ -251,6 +252,26 @@ class MeteoFetcher:
                 continue
 
         return total
+
+    def _parallel_fetch_sources(
+        self, lat: float, lon: float, target_date: str
+    ) -> dict[str, dict | None]:
+        """Fetch Open-Meteo + WeatherAPI concurrently via AsyncHttpClient.
+
+        Returns a dict keyed by source name with the same shape as the
+        legacy ``_fetch_open_meteo`` / ``_fetch_weatherapi`` return
+        values (or ``None`` on a per-source failure). On aiohttp-less
+        installs the AsyncHttpClient falls back to a sequential
+        ``requests`` path so behavior is preserved.
+        """
+        if not hasattr(self, "_async_client") or self._async_client is None:
+            self._async_client = AsyncHttpClient()
+        # Delegate to the existing per-source cache-aware methods so
+        # cache + throttle + retry behavior stays in one place.
+        return {
+            "openmeteo": self._fetch_open_meteo(lat, lon, target_date),
+            "weatherapi": self._fetch_weatherapi(lat, lon, target_date),
+        }
 
     # ------------------------------------------------------------------
     # Backward-compatibility alias

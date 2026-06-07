@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
@@ -78,29 +78,29 @@
     <div class="container">
         <!-- Header -->
         <header>
-            <h1>ðŸ¤– PolyMarket Ultimate Weather Bot <span id="statusBadge" class="status-badge status-stopped">STOPPED</span></h1>
-            <p style="margin-top: 8px; opacity: 0.9;">v4.0 - 8+ Model Ensemble â€¢ DEB Consensus â€¢ Fractional Kelly</p>
+            <h1>🤖 PolyMarket Ultimate Weather Bot <span id="statusBadge" class="status-badge status-stopped">STOPPED</span></h1>
+            <p style="margin-top: 8px; opacity: 0.9;">v4.0 - 8+ Model Ensemble • DEB Consensus • Fractional Kelly</p>
         </header>
         
         <!-- Controls -->
         <div class="controls">
-            <button class="btn-start" onclick="startBot()">â–¶ï¸ BaÅŸlat</button>
-            <button class="btn-stop" onclick="stopBot()">â¹ï¸ Durdur</button>
-            <button class="btn-reset" onclick="resetBot()">ðŸ”„ SÄ±fÄ±rla</button>
+            <button class="btn-start" onclick="startBot()">▶️ Başlat</button>
+            <button class="btn-stop" onclick="stopBot()">⏹️ Durdur</button>
+            <button class="btn-reset" onclick="resetBot()">🔄 Sıfırla</button>
         </div>
         
         <!-- Portfolio Stats -->
         <div class="card-grid">
             <div class="card">
-                <div class="card-title">Portfolio DeÄŸeri</div>
+                <div class="card-title">Portfolio Değeri</div>
                 <div class="card-value" id="portfolioValue">$1,000.00</div>
             </div>
             <div class="card">
-                <div class="card-title">GÃ¼nlÃ¼k PnL</div>
+                <div class="card-title">Günlük PnL</div>
                 <div class="card-value" id="dailyPnl">$0.00</div>
             </div>
             <div class="card">
-                <div class="card-title">AÃ§Ä±k PnL <span style="font-size:11px;opacity:0.6">(unrealized)</span></div>
+                <div class="card-title">Açık PnL <span style="font-size:11px;opacity:0.6">(unrealized)</span></div>
                 <div class="card-value" id="unrealizedPnl">$0.00</div>
             </div>
             <div class="card">
@@ -112,7 +112,7 @@
                 <div class="card-value" id="smartPool">$400.00</div>
             </div>
             <div class="card">
-                <div class="card-title">AÃ§Ä±k Pozisyon</div>
+                <div class="card-title">Açık Pozisyon</div>
                 <div class="card-value" id="exposure">$0.00</div>
             </div>
             <div class="card">
@@ -127,7 +127,7 @@
         
         <!-- Risk Limits -->
         <div class="card" style="margin-bottom: 20px;">
-            <h3 style="margin-bottom: 15px;">ðŸ›¡ï¸ Risk Limitleri</h3>
+            <h3 style="margin-bottom: 15px;">🛡️ Risk Limitleri</h3>
             <div class="card-grid">
                 <div>
                     <div class="card-title">Max Bahis</div>
@@ -150,10 +150,10 @@
         
         <!-- Tabs -->
         <div class="tabs">
-            <button class="tab active" onclick="switchTab('signals', event)">ðŸŽ¯ Aktif Sinyaller</button>
-            <button class="tab" onclick="switchTab('markets', event)">ðŸŒ Global Market Watch</button>
-            <button class="tab" onclick="switchTab('history', event)">ðŸ“Š GeÃ§miÅŸ Bahisler</button>
-            <button class="tab" onclick="switchTab('analytics', event)">ðŸ“ˆ Analytics</button>
+            <button class="tab active" onclick="switchTab('signals', event)">🎯 Aktif Sinyaller</button>
+            <button class="tab" onclick="switchTab('markets', event)">🌍 Global Market Watch</button>
+            <button class="tab" onclick="switchTab('history', event)">📊 Geçmiş Bahisler</button>
+            <button class="tab" onclick="switchTab('analytics', event)">📈 Analytics</button>
         </div>
         
         <!-- Tab 1: Active Signals -->
@@ -162,12 +162,12 @@
                 <thead>
                     <tr>
                         <th>ID</th>
-                        <th>Åžehir</th>
-                        <th>AÃ§Ä±lÄ±ÅŸ Tarihi</th>
-                        <th>KapanÄ±ÅŸ Tarihi</th>
+                        <th>Şehir</th>
+                        <th>Açılış Tarihi</th>
+                        <th>Kapanış Tarihi</th>
                         <th>Outcome</th>
                         <th>Ladder</th>
-                        <th>GiriÅŸ</th>
+                        <th>Giriş</th>
                         <th>Mevcut</th>
                         <th>Bahis</th>
                         <th>PnL</th>
@@ -178,7 +178,7 @@
                     </tr>
                 </thead>
                 <tbody id="signalsTable">
-                    <tr><td colspan="14" style="text-align: center; padding: 40px;">HenÃ¼z aktif bahis yok</td></tr>
+                    <tr><td colspan="14" style="text-align: center; padding: 40px;">Henüz aktif bahis yok</td></tr>
                 </tbody>
             </table>
         </div>
@@ -188,7 +188,7 @@
             <table>
                 <thead>
                     <tr>
-                        <th>Åžehir</th>
+                        <th>Şehir</th>
                         <th>Tarih</th>
                         <th>Metrik</th>
                         <th>Strike</th>
@@ -200,7 +200,7 @@
                     </tr>
                 </thead>
                 <tbody id="marketsTable">
-                    <tr><td colspan="8" style="text-align: center; padding: 40px;">Market verisi yÃ¼kleniyor...</td></tr>
+                    <tr><td colspan="8" style="text-align: center; padding: 40px;">Market verisi yükleniyor...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -225,16 +225,16 @@
                 <thead>
                     <tr>
                         <th>ID</th>
-                        <th>Åžehir</th>
+                        <th>Şehir</th>
                         <th>Outcome</th>
                         <th>Bahis</th>
                         <th>PnL</th>
-                        <th>SonuÃ§</th>
+                        <th>Sonuç</th>
                         <th>Tarih</th>
                     </tr>
                 </thead>
                 <tbody id="historyTable">
-                    <tr><td colspan="7" style="text-align: center; padding: 40px;">HenÃ¼z sonuÃ§lanmÄ±ÅŸ bahis yok</td></tr>
+                    <tr><td colspan="7" style="text-align: center; padding: 40px;">Henüz sonuçlanmış bahis yok</td></tr>
                 </tbody>
             </table>
         </div>
@@ -243,11 +243,11 @@
         <div id="analytics" class="tab-content">
             <div class="card-grid">
                 <div class="card" style="grid-column: span 2;">
-                    <h3 style="margin-bottom: 15px;">Portfolio PerformansÄ±</h3>
+                    <h3 style="margin-bottom: 15px;">Portfolio Performansı</h3>
                     <canvas id="portfolioChart" height="80"></canvas>
                 </div>
                 <div class="card">
-                    <h3 style="margin-bottom: 15px;">Kazanma OranÄ±</h3>
+                    <h3 style="margin-bottom: 15px;">Kazanma Oranı</h3>
                     <canvas id="winRateChart" height="200"></canvas>
                 </div>
             </div>
@@ -255,6 +255,12 @@
     </div>
     
     <script>
+        // XSS-safe HTML escaping
+        function esc(s) {
+            if (s == null) return '';
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
         let ws = null;
         const API_BASE = '';
         
@@ -386,7 +392,7 @@
                 const tbody = document.getElementById('signalsTable');
                 
                 if (!data.signals || data.signals.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="12" style="text-align: center; padding: 40px;">HenÃ¼z aktif bahis yok</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="12" style="text-align: center; padding: 40px;">Henüz aktif bahis yok</td></tr>';
                     return;
                 }
                 
@@ -395,13 +401,13 @@
                 // live_edge:  "would I enter now?" signal (model_prob_now - current_price)
                 // move_pct:   (current - entry) / entry, signed
                 const entryEdgeCell = bet.entry_edge != null
-                    ? `<td style="color: ${bet.entry_edge > 0.03 ? '#22c55e' : bet.entry_edge < 0 ? '#ef4444' : ''}" title="GiriÅŸteki model edge â€” bu bahsi neden aÃ§tÄ±k">${(bet.entry_edge * 100).toFixed(1)}%</td>`
-                    : `<td title="Analiz kaydÄ± yok">-</td>`;
+                    ? `<td style="color: ${bet.entry_edge > 0.03 ? '#22c55e' : bet.entry_edge < 0 ? '#ef4444' : ''}" title="Girişteki model edge â€” bu bahsi neden açtık">${(bet.entry_edge * 100).toFixed(1)}%</td>`
+                    : `<td title="Analiz kaydı yok">-</td>`;
                 const liveEdgeCell = bet.live_edge != null
-                    ? `<td style="color: ${bet.live_edge > 0.03 ? '#22c55e' : bet.live_edge < 0 ? '#ef4444' : ''}" title="Åžu anki fiyattan girilseydi edge â€” pozisyonu tutmaya devam etmeli miyiz?">${(bet.live_edge * 100).toFixed(1)}%</td>`
+                    ? `<td style="color: ${bet.live_edge > 0.03 ? '#22c55e' : bet.live_edge < 0 ? '#ef4444' : ''}" title="Şžu anki fiyattan girilseydi edge â€” pozisyonu tutmaya devam etmeli miyiz?">${(bet.live_edge * 100).toFixed(1)}%</td>`
                     : `<td>-</td>`;
                 const movePctCell = bet.move_pct != null
-                    ? `<td class="${bet.move_pct >= 0 ? 'positive' : 'negative'}" title="GiriÅŸten bu yana fiyat deÄŸiÅŸimi">${bet.move_pct >= 0 ? '+' : ''}${(bet.move_pct * 100).toFixed(1)}%</td>`
+                    ? `<td class="${bet.move_pct >= 0 ? 'positive' : 'negative'}" title="Girişten bu yana fiyat değişimi">${bet.move_pct >= 0 ? '+' : ''}${(bet.move_pct * 100).toFixed(1)}%</td>`
                     : `<td>-</td>`;
                 return `
                     <tr>
@@ -410,7 +416,7 @@
                         <td>${bet.placed_at ? new Date(bet.placed_at).toLocaleString('tr-TR') : '-'}</td>
                         <td>${bet.resolution_date ? new Date(bet.resolution_date).toLocaleString('tr-TR') : '-'}</td>
                         <td><span class="badge badge-${(bet.outcome || 'yes').toLowerCase()}">${bet.outcome || 'YES'}</span></td>
-                        <td>${bet.ladder_orders && bet.ladder_orders.length > 0 ? '<span class="badge badge-ladder">ðŸªœ LADDER</span>' : '-'}</td>
+                        <td>${bet.ladder_orders && bet.ladder_orders.length > 0 ? '<span class="badge badge-ladder">🪜 LADDER</span>' : '-'}</td>
                         <td title="${bet.entry_price}">${fmtPrice(bet.entry_price)}</td>
                         <td title="${bet.current_price}">${fmtPrice(bet.current_price)}</td>
                         <td>$${fmtPrice(bet.stake_amount, 2)}</td>
@@ -434,7 +440,7 @@
                 const tbody = document.getElementById('marketsTable');
                 
                 if (!data.markets || data.markets.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 40px;">Market bulunamadÄ±</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 40px;">Market bulunamadı</td></tr>';
                     return;
                 }
 
@@ -498,7 +504,7 @@
                 }
                 
                 if (!data.history || data.history.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px;">HenÃ¼z sonuÃ§lanmÄ±ÅŸ bahis yok</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px;">Henüz sonuçlanmış bahis yok</td></tr>';
                     return;
                 }
                 

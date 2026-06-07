@@ -1,8 +1,8 @@
-﻿"""Bet placement executor making paper or live trades on Polymarket."""
+"""Bet placement executor making paper or live trades on Polymarket."""
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import func
 from database.db import get_session
 from database.models import Analysis, Bet, WeatherMarket, Portfolio
@@ -12,7 +12,7 @@ logger = logging.getLogger("EXECUTOR_BET_PLACER")
 
 
 class BetPlacer:
-    """SADECE bet aÃ§ar. Karar vermez - engine karar verir."""
+    """SADECE bet açar. Karar vermez - engine karar verir."""
 
     # Statuses that count as "open" for risk/exposure accounting.
     _OPEN_STATUSES = ("active", "open", "placed", "pending")
@@ -60,7 +60,7 @@ class BetPlacer:
 
 
     def place_bet(self, analysis_id: int) -> Bet | None:
-        """Analiz sonucuna gÃ¶re bet aÃ§."""
+        """Analiz sonucuna göre bet aç."""
         with get_session() as session:
             analysis = session.query(Analysis).filter_by(id=analysis_id).first()
             if not analysis or not analysis.should_bet:
@@ -73,7 +73,7 @@ class BetPlacer:
                 return None
 
             # Guard: skip resolved markets
-            if market.target_date and market.target_date <= datetime.utcnow():
+            if market.target_date and market.target_date <= datetime.now(timezone.utc).replace(tzinfo=None):
                 logger.debug(f"Market {market.id}: already resolved, skipping bet")
                 return None
 
@@ -84,18 +84,18 @@ class BetPlacer:
                 logger.debug(f"Market {market.id}: price {market_price:.4f} < min {min_price}, skipping bet")
                 return None
 
-            # Zaten bet aÃ§Ä±lmÄ±ÅŸ mÄ±?
+            # Zaten bet açılmış mı?
             existing = session.query(Bet).filter(
                 Bet.market_id == analysis.market_id,
                 Bet.status.in_(["pending", "placed"])
             ).first()
             if existing:
-                logger.info(f"Market {market.id} iÃ§in zaten bet var")
+                logger.info(f"Market {market.id} için zaten bet var")
                 return None
 
             # ------------------------------------------------------------------
             # Risk checks. These are enforced HERE (not in run_place_bets)
-            # so every entry point â€” scheduler, manual API call, CLI â€” is
+            # so every entry point "” scheduler, manual API call, CLI "” is
             # guarded by the same hard caps. A previous version of this
             # module skipped all caps and let exposure balloon to 35x the
             # smart-pool ceiling, which is what surfaced the
@@ -125,7 +125,7 @@ class BetPlacer:
             if proposed_amount > max_bet:
                 logger.warning(
                     f"Risk cap: Market {market.id} amount ${proposed_amount:.2f} "
-                    f"exceeds per-bet max ${max_bet:.2f} â€” clamping."
+                    f"exceeds per-bet max ${max_bet:.2f} — clamping."
                 )
                 proposed_amount = max_bet
 
@@ -143,7 +143,7 @@ class BetPlacer:
                     self.risk_manager.portfolio_value
                 ) * float(self.risk_manager.config.TOTAL_EXPOSURE_PCT)
                 logger.warning(
-                    f"Risk cap: Market {market.id} rejected â€” exposure would "
+                    f"Risk cap: Market {market.id} rejected — exposure would "
                     f"reach ${current_exposure + proposed_amount:.2f}, "
                     f"exceeding cap ${max_exposure:.2f}."
                 )
@@ -180,7 +180,7 @@ class BetPlacer:
             ) or 0
             if int(city_open_count) >= int(self.risk_manager.config.CITY_CAP):
                 logger.warning(
-                    f"Risk cap: Market {market.id} rejected â€” city cap "
+                    f"Risk cap: Market {market.id} rejected — city cap "
                     f"({city_open_count}/{self.risk_manager.config.CITY_CAP}) "
                     f"reached for {market.city}."
                 )
@@ -209,7 +209,7 @@ class BetPlacer:
             # Shares = amount / price (position size in contracts)
             shares = (proposed_amount / fill_price) if fill_price > 0 else 0.0
 
-            # Bet objesi oluÅŸtur
+            # Bet objesi oluştur
             bet = Bet(
                 market_id=analysis.market_id,
                 analysis_id=analysis_id,
@@ -240,7 +240,7 @@ class BetPlacer:
 
                     bet.order_id = order.get("orderID")
                     bet.status = "placed"
-                    bet.placed_at = datetime.utcnow()
+                    bet.placed_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
                     market.status = "bet_placed"
                     logger.info(
@@ -250,13 +250,13 @@ class BetPlacer:
                 except Exception as e:
                     bet.status = "failed"
                     bet.error_message = str(e)
-                    logger.error(f"âŒ Live Bet aÃ§Ä±lamadÄ± {market.id}: {e}")
+                    logger.error(f"âŒ Live Bet açılamadı {market.id}: {e}")
             else:
                 # Simulated / Paper trade fallback. Also covers the case
                 # where Config.DRY_RUN is true (defense-in-depth).
-                bet.order_id = f"paper_order_{market.id}_{int(datetime.utcnow().timestamp())}"
+                bet.order_id = f"paper_order_{market.id}_{int(datetime.now(timezone.utc).replace(tzinfo=None).timestamp())}"
                 bet.status = "placed"
-                bet.placed_at = datetime.utcnow()
+                bet.placed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 market.status = "bet_placed"
                 logger.info(
                     f"ðŸ“ PAPER BET AÃ‡ILDI: {market.id} | "
@@ -271,7 +271,7 @@ class BetPlacer:
                 portfolio.cash_balance -= proposed_amount
                 portfolio.current_value = portfolio.cash_balance
                 portfolio.total_value = portfolio.cash_balance
-                portfolio.last_updated = datetime.utcnow()
+                portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
             session.add(bet)
             session.commit()
             return bet
@@ -283,10 +283,10 @@ class BetPlacer:
         for token in tokens:
             if token.get("outcome", "").upper() == side.upper():
                 return token.get("token_id")
-        raise ValueError(f"Token ID bulunamadÄ±: {side}")
+        raise ValueError(f"Token ID bulunamadı: {side}")
 
     def place_all_pending(self) -> int:
-        """should_bet=True olan tÃ¼m analizler iÃ§in bet aÃ§."""
+        """should_bet=True olan tüm analizler için bet aç."""
         placed = 0
         with get_session() as session:
             pending = session.query(Analysis).filter(
@@ -305,7 +305,7 @@ class BetPlacer:
                 if bet is not None:
                     placed += 1
             except Exception as e:
-                logger.error(f"Bet hatasÄ± (analysis {aid}): {e}")
+                logger.error(f"Bet hatası (analysis {aid}): {e}")
                 continue
 
         return placed

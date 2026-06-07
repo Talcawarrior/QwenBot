@@ -18,9 +18,13 @@ class BetPlacer:
     _OPEN_STATUSES = ("active", "open", "placed", "pending")
 
     def __init__(self):
-        # Hard guard: the user requires paper-only mode. We refuse to arm
-        # a live trading client whenever Config.DRY_RUN is true, even if
-        # Polymarket credentials are present in the environment.
+        # Lazy-import risk manager to break import cycle:
+        #   engine/strategy.py  ->  imports from this module
+        #   executor/bet_placer.py  ->  uses engine.strategy.RiskManager
+        from engine.strategy import RiskManager
+        self.risk_manager = RiskManager()
+
+        # Hard guard: the user requires paper-only mode.
         if Config.DRY_RUN:
             self.ready = False
             logger.info(
@@ -30,17 +34,8 @@ class BetPlacer:
         else:
             self._init_polymarket_client()
 
-        # Lazy-imported risk manager to break an import cycle:
-        #   engine/strategy.py  ->  imports from this module's package level
-        #                          (and uses BotConfig for max_bet_amount, etc.)
-        #   executor/bet_placer.py  ->  uses engine.strategy.RiskManager
-        # Importing engine.strategy at top-level would cause a circular
-        # ImportError on startup. The lazy import here is intentional and
-        # the only place RiskManager is used, so the cost is one deferred
-        # lookup per BetPlacer.place() call (~once per scan cycle).
-        # Verified by 	ests/test_bet_placer.py once the import cycle is
-        # broken in a refactor; for now, this comment is the documentation.
-        """Polymarket CLOB client'Ä± hazÄ±rla (sadece DRY_RUN=false ise Ã§aÄŸrÄ±lÄ±r)."""
+    def _init_polymarket_client(self):
+        """Polymarket CLOB client hazirla (sadece DRY_RUN=false ise cagrilir)."""
         try:
             from py_clob_client.client import ClobClient
             if not bot_config.polymarket.private_key:
@@ -51,17 +46,18 @@ class BetPlacer:
             self.client = ClobClient(
                 bot_config.polymarket.api_url,
                 key=bot_config.polymarket.private_key,
-                chain_id=137,  # Polygon
+                chain_id=137,
             )
             self.client.set_api_creds(self.client.create_or_derive_api_creds())
             self.ready = True
             logger.warning(
-                "LIVE TRADING ARMED â€” DRY_RUN=false and credentials present. "
+                "LIVE TRADING ARMED -- DRY_RUN=false and credentials present. "
                 "Real orders will be sent to Polymarket."
             )
         except Exception as e:
-            logger.warning(f"Polymarket client kurulamadÄ± (PAPER TRADE ACTIVE): {e}")
+            logger.warning(f"Polymarket client kurulamadi (PAPER TRADE ACTIVE): {e}")
             self.ready = False
+
 
     def place_bet(self, analysis_id: int) -> Bet | None:
         """Analiz sonucuna gÃ¶re bet aÃ§."""

@@ -1,11 +1,11 @@
-"""Sinyal analizi, Kelly kasa yönetimi, risk kontrolü ve SIA kendi kendini geliştiren algoritma (Self-Improving Algorithm)."""
+﻿"""Sinyal analizi, Kelly kasa yÃ¶netimi, risk kontrolÃ¼ ve SIA kendi kendini geliÅŸtiren algoritma (Self-Improving Algorithm)."""
 
 import json
 import logging
 from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import func
-from config.settings import config
+from config.settings import config, bot_config
 from database.models import Bet, Portfolio, ModelPerformance
 
 logger = logging.getLogger("STRATEGY_ENGINE")
@@ -193,7 +193,8 @@ class BettingEngine:
             edge = model_prob - market_price
 
         ev = edge - self.config.FEE_DRAG
-        is_eligible = edge >= self.config.MIN_EDGE and ev > 0
+        # Canonical source: bot_config.strategy.min_edge (matches calculator).
+        is_eligible = edge >= bot_config.strategy.min_edge and ev > 0
 
         if not is_eligible:
             return None

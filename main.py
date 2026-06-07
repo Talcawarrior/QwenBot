@@ -1,4 +1,4 @@
-"""
+﻿"""
 MAIN SERVER - FastAPI + WebSocket + Command Line Interface (CLI)
 - Fully decoupled, modular and robust
 - Handles CLI tasks (e.g. python main.py fetch) for pinpoint, isolated executions
@@ -55,6 +55,8 @@ class BotState:
         self.betting_engine = None
         self.settlement_engine = None
         self.sia_loop = None
+        self.sia_last_run = None  # datetime of last SIA optimization
+        self.sia_interval_hours = 24  # run SIA once a day
 
     def initialize_modules(self):
         """Initialize all modular components."""
@@ -147,7 +149,7 @@ async def root():
     dashboard_path = os.path.join(os.path.dirname(__file__), "dashboard.html")
     if os.path.exists(dashboard_path):
         return FileResponse(dashboard_path)
-    return HTMLResponse("<h1>Dashboard yükleniyor...</h1>")
+    return HTMLResponse("<h1>Dashboard yÃ¼kleniyor...</h1>")
 
 
 @app.get("/api/status")
@@ -239,12 +241,12 @@ async def get_signals():
 
     Edge semantics (UX fix #6):
     - ``entry_edge``   = the edge that triggered the bet
-                         (model_prob_at_entry − market_price_at_entry),
+                         (model_prob_at_entry âˆ’ market_price_at_entry),
                          taken from the originating Analysis row.
     - ``live_edge``    = current "would I enter at today's price?" edge
-                         (model_prob_now − current_price), kept under
+                         (model_prob_now âˆ’ current_price), kept under
                          the legacy ``edge`` key for backward compat.
-    - ``move_pct``     = (current − entry) / entry, signed — useful at
+    - ``move_pct``     = (current âˆ’ entry) / entry, signed â€” useful at
                          a glance to see how much the price has run
                          since entry. Positive = good for a YES bet.
     For a freshly placed bet the entry_edge explains why we bought;
@@ -296,7 +298,7 @@ async def get_signals():
                 if origin is not None and origin.edge is not None:
                     entry_edge = float(origin.edge)
 
-                # Move % since entry — derived directly from prices so
+                # Move % since entry â€” derived directly from prices so
                 # the UI can show price momentum even without an analysis
                 # row present.
                 if entry is not None and current is not None and entry > 0:
@@ -316,10 +318,10 @@ async def get_signals():
                         float(bet.unrealized_pnl) if bet.unrealized_pnl is not None else 0.0
                     ),
                     "fair_value": fair_value,
-                    "edge": live_edge,        # legacy key — now means "live edge"
+                    "edge": live_edge,        # legacy key â€” now means "live edge"
                     "entry_edge": entry_edge, # UX fix #6: edge at the time of entry
                     "live_edge": live_edge,   # explicit alias for clarity
-                    "move_pct": move_pct,     # UX fix #6: (current − entry) / entry
+                    "move_pct": move_pct,     # UX fix #6: (current âˆ’ entry) / entry
                     "ladder_orders": [],
                     "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
                     "resolution_date": res_date.isoformat() if res_date else None,
@@ -336,7 +338,7 @@ async def get_signals():
 
 @app.get("/api/markets")
 async def get_markets():
-    """Get all future active weather markets (Global Market Watch) — today + 2 days only."""
+    """Get all future active weather markets (Global Market Watch) â€” today + 2 days only."""
     from datetime import timedelta
     from engine.calculator import Calculator
     from database.models import WeatherForecast
@@ -494,7 +496,7 @@ async def start_bot():
         state.tasks["settlement"] = asyncio.create_task(settlement_loop(), name="settlement_loop")
 
         await broadcast_message({"type": "bot_started", "timestamp": datetime.now().isoformat()})
-        return {"status": "started", "message": "Bot başlatıldı"}
+        return {"status": "started", "message": "Bot baÅŸlatÄ±ldÄ±"}
 
 
 @app.post("/api/stop")
@@ -524,7 +526,7 @@ async def reset_bot():
     - Deletes all Analysis rows. They are regenerable on the next
       scan; keeping them would cause the 'total_signals' counter
       to remain non-zero after a reset.
-    - Leaves WeatherMarket rows in place — they are the universe
+    - Leaves WeatherMarket rows in place â€” they are the universe
       of tradable markets and are re-priced on the next scan.
 
     In-memory state is wiped last so the response uses fresh
@@ -575,7 +577,7 @@ async def reset_bot():
 
     return {
         "status": "reset",
-        "message": "Bot sıfırlandı",
+        "message": "Bot sÄ±fÄ±rlandÄ±",
         "cancelled_bets": int(cancelled_bets or 0),
         "deleted_analyses": int(deleted_analyses or 0),
     }
@@ -611,7 +613,7 @@ async def scan_and_bet_loop():
     the FastAPI event loop stays responsive. Without this, a single scan
     cycle that fetches 50+ Polymarket markets and runs 50+ weather/forecast
     calls can block the loop for 30+ seconds, which makes every
-    `/api/status`, `/api/signals`, and the WebSocket push hang — and
+    `/api/status`, `/api/signals`, and the WebSocket push hang â€” and
     makes the user think "Start button doesn't work after Reset".
     """
     from database.models import Bet, Analysis
@@ -624,7 +626,7 @@ async def scan_and_bet_loop():
         run_update_prices,
     )
 
-    def _run_cycle() -> int:
+    def _run_cycle() -> tuple:
         """One scan cycle. Returns the number of bets placed.
 
         Runs in a worker thread via asyncio.to_thread, so any DB
@@ -639,7 +641,14 @@ async def scan_and_bet_loop():
             run_update_prices()
         except Exception as e:
             logger.warning("Price refresh failed: %s", e)
-        return n
+        # Count open markets for the WebSocket scan_complete payload
+        from database.models import WeatherMarket
+        from database.db import get_db_session
+        with get_db_session() as session:
+            n_markets = session.query(WeatherMarket).filter(
+                WeatherMarket.status == "open"
+            ).count()
+        return n, n_markets
 
     def _refresh_counters() -> tuple:
         """Refresh total_bets/total_signals from the DB. Returns (bets, signals)."""
@@ -659,7 +668,7 @@ async def scan_and_bet_loop():
     while state.is_running:
         try:
             logger.info("Executing Scan & Bet job cycle...")
-            n_placed = await asyncio.to_thread(_run_cycle)
+            n_placed, n_markets = await asyncio.to_thread(_run_cycle)
             total_bets, total_signals = await asyncio.to_thread(_refresh_counters)
             state.total_bets = total_bets
             state.total_signals = total_signals
@@ -668,7 +677,7 @@ async def scan_and_bet_loop():
                 {
                     "type": "scan_complete",
                     "timestamp": state.last_scan.isoformat(),
-                    "markets_scanned": 50,
+                    "markets_scanned": n_markets,
                     "total_signals": state.total_signals,
                     "total_bets": state.total_bets,
                     "placed_this_cycle": n_placed,
@@ -689,6 +698,22 @@ async def settlement_loop():
     while state.is_running:
         try:
             logger.info("Executing Settlement job cycle...")
+            # SIA loop: re-evaluate model weights once per `sia_interval_hours`.
+            # Without this hook the weights dictionary is built once at
+            # startup and never updated, so the bot never adapts to recent
+            # model performance. We piggyback on the settlement loop so we
+            # do not need a separate asyncio task (PR review fix #1).
+            try:
+                from datetime import datetime, timedelta
+                now = datetime.utcnow()
+                last = state.sia_last_run
+                interval = timedelta(hours=state.sia_interval_hours)
+                if state.sia_loop is not None and (last is None or now - last >= interval):
+                    await asyncio.to_thread(state.sia_loop.run_optimization_cycle)
+                    state.sia_last_run = now
+                    logger.info("SIA loop ran (next in %sh)", state.sia_interval_hours)
+            except Exception as sia_err:
+                logger.error("SIA loop error: %s", sia_err, exc_info=True)
             await asyncio.to_thread(run_settle)
         except Exception as e:
             logger.error("Settlement loop cycle error: %s", e, exc_info=True)
@@ -712,9 +737,9 @@ def run_cli():
     ])
     args = parser.parse_args()
 
-    # DB'yi hazırla
+    # DB'yi hazÄ±rla
     init_db()
-    logger.info("Database hazır")
+    logger.info("Database hazÄ±r")
 
     from jobs.scheduler import (
         run_fetch_markets, run_parse_markets, run_fetch_weather,
@@ -733,11 +758,11 @@ def run_cli():
 
     if args.command == "run":
         import uvicorn
-        logger.info("🚀 Bot başlatılıyor...")
+        logger.info("ðŸš€ Bot baÅŸlatÄ±lÄ±yor...")
         port = int(os.getenv("PORT", str(config.PORT)))
         uvicorn.run(app, host=config.HOST, port=port)
     elif args.command == "test":
-        logger.info("🧪 Test modu...")
+        logger.info("ðŸ§ª Test modu...")
         for name, func in commands.items():
             if name != "bet" and name != "settle":
                 try:

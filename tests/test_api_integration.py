@@ -10,10 +10,17 @@ Why not a temp DB: `database.db.engine` is built at module-import time from
 `config.settings.config.DB_PATH` and is reachable by every other module on
 import. Patching the engine after import is racy; the cleanest path is to
 read the real DB (WAL allows concurrent readers).
+
+Why this file skips on missing httpx: the FastAPI TestClient needs httpx.
+Local dev and the bot both install it transitively (via fastapi +
+starlette >= 0.21), but minimal CI runners sometimes don't. We skip
+gracefully rather than failing collection.
 """
 
 import pytest
-from fastapi.testclient import TestClient
+
+httpx = pytest.importorskip("httpx", reason="httpx not installed (needed for FastAPI TestClient)")
+from fastapi.testclient import TestClient  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -30,7 +37,6 @@ def test_status_endpoint_returns_known_shape(client):
     assert resp.status_code == 200, resp.text
     body = resp.json()
 
-    # Top-level keys the dashboard reads.
     for key in ("is_running", "portfolio", "stats", "limits"):
         assert key in body, f"missing '{key}' in /api/status: {list(body.keys())}"
 
@@ -80,5 +86,4 @@ def test_dashboard_html_served(client):
     body = resp.text
     assert "PolyMarket" in body
     assert "Chart" in body or "chart" in body
-    # And the @media query for mobile (fix #6) must be present.
     assert "@media" in body

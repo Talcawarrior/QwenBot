@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import func
 from utils.kelly import kelly_bet_amount
+from utils.weights_store import load_weights, save_weights
 from config.settings import config, bot_config
 from database.models import Bet, Portfolio, ModelPerformance
 
@@ -396,6 +397,16 @@ class SIALoop:
         self.db_session_factory = db_session_factory
         self.config = cfg or config
         self.model_weights = self.config.MODEL_WEIGHTS.copy()
+        self.model_weights = self.config.MODEL_WEIGHTS.copy()
+        persisted = load_weights()
+        if persisted:
+            for k, v in persisted.items():
+                if k in self.model_weights:
+                    self.model_weights[k] = v
+            logger.info(
+                "SIA weights loaded from disk: %s",
+                {k: round(v, 4) for k, v in self.model_weights.items()},
+            )
 
     def calculate_brier_score(self, predictions: List[float], outcomes: List[bool]) -> float:
         """Calculate Brier Score."""
@@ -511,6 +522,12 @@ class SIALoop:
                 weight * 100,
                 change * 100,
             )
+        # Persist learned weights to disk so the next process
+        # restart picks them up. Threshold (0.001) is enforced
+        # inside save_weights so we do not spam writes on tiny
+        # drift between optimization cycles.
+        save_weights(new_weights)
+
         return new_weights
 
     def run_optimization_cycle(self) -> bool:

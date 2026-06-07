@@ -5,7 +5,6 @@ import logging
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
 import aiohttp
-from utils.kelly import kelly_fraction
 from config.settings import config, bot_config, Config
 from database.db import get_session
 from database.models import WeatherMarket, WeatherForecast, Analysis
@@ -53,15 +52,28 @@ class Calculator:
         prob_above = 1.0 - prob_below
         return max(0.01, min(0.99, prob_above))
 
-    def kelly_criterion(self, prob: float, odds: float, fraction: float = 0.15) -> float:
-        """Pure f* fraction. Delegates to utils.kelly.kelly_fraction
-        after converting decimal odds `odds` to market price `price`.
-        Kept here as a thin wrapper so legacy callers in
-        engine/calculator do not break. Prefer utils.kelly for new code."""
-        if odds <= 0 or prob <= 0 or prob >= 1:
+    def kelly_criterion(self, prob: float, price: float, fraction: float = 0.15) -> float:
+        """Pure f* fraction.
+
+        Parameter ``price`` is the *market price* of the bet (0..1), the
+        same convention the in-process callers use
+        (``market_implied = market.yes_price``). The decimal odds are
+        computed internally as ``1/price - 1``.
+
+        Note: the parameter is still named in the public signature to
+        preserve the legacy call sites in :func:`analyze_market`, but
+        callers should treat it as a price, not as a decimal odd.
+        """
+        if price <= 0 or price >= 1 or prob <= 0 or prob >= 1:
             return 0.0
-        # decimal odds o -> market price p = 1/o -> delegate to the shared helper
-        return kelly_fraction(prob, 1.0 / odds) * fraction
+        b = (1.0 / price) - 1.0
+        if b <= 0:
+            return 0.0
+        q = 1.0 - prob
+        f_star = (b * prob - q) / b
+        if f_star <= 0:
+            return 0.0
+        return f_star * fraction
 
     def _normal_cdf(self, z: float) -> float:
         """Standard Normal CDF using Abramowitz & Stegun approximation."""

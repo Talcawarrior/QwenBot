@@ -9,6 +9,7 @@ from typing import Optional
 from database.db import get_session
 from database.models import WeatherMarket
 from config.settings import config, bot_config
+from scrapers.async_client import AsyncHttpClient
 from utils.retry import retry
 from utils.errors import ScraperError
 
@@ -27,14 +28,23 @@ class PolymarketScraper:
         pass
 
     async def close_session(self):
-        """Mock close session for test compatibility."""
-        pass
+        """Close the AsyncHttpClient aiohttp session (if any)."""
+        client = getattr(self, "_async_client", None)
+        if client is not None:
+            await client.aclose()
 
     @retry(max_attempts=3, delay=5, exceptions=(requests.RequestException,))
     def _fetch_raw_markets(self) -> list[dict]:
-        """Polymarket'ten ham veri çek — public-search + today+2 gün + parallel."""
+        """Polymarket'ten ham veri çek — public-search + today+2 gün + parallel.
+
+        Tier 3 #12: parallel path now goes through AsyncHttpClient which
+        uses aiohttp + bounded concurrency (8) + 250 ms per-host throttle
+        and an in-process cache. The sync ThreadPoolExecutor path is
+        kept as the no-aiohttp fallback (the AsyncHttpClient handles
+        that automatically via ``_HAS_AIOHTTP``).
+        """
         from datetime import timedelta
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from urllib.parse import urlparse
         today = datetime.utcnow()
         date_strs = [
             (today + timedelta(days=i)).strftime("%B %#d")
@@ -52,41 +62,48 @@ class PolymarketScraper:
             "miami temperature", "seoul temperature",
         ]
 
+        gamma_host = urlparse(self.gamma_url).netloc
+        # Build the batched (url, params, host) tuples once. AsyncHttpClient
+        # takes care of bounded concurrency, per-host throttle and cache.
+        items = [
+            (
+                f"{self.gamma_url}/public-search",
+                {"q": q, "limit_per_type": 50},
+                gamma_host,
+            )
+            for q in queries
+        ]
+        if not hasattr(self, "_async_client") or self._async_client is None:
+            self._async_client = AsyncHttpClient()
+        results = self._async_client.fetch_many(items)
+        # Each entry is the parsed JSON or None on failure; events live
+        # under the "events" key. Skip failures.
+        per_query_events: list[list[dict]] = []
+        for r in results:
+            if not r:
+                per_query_events.append([])
+                continue
+            per_query_events.append(r.get("events", []) or [])
+
         all_events: list[dict] = []
         seen_slugs: set[str] = set()
-
-        def _fetch_one(q: str) -> list[dict]:
-            try:
-                resp = requests.get(
-                    f"{self.gamma_url}/public-search",
-                    params={"q": q, "limit_per_type": 50},
-                    timeout=20,
-                )
-                resp.raise_for_status()
-                return resp.json().get("events", [])
-            except Exception:
-                return []
-
-        # Parallel fetch (8 workers) to keep wall time low
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            futures = {pool.submit(_fetch_one, q): q for q in queries}
-            for fut in as_completed(futures):
-                for e in fut.result():
-                    slug = e.get("slug", "")
-                    title = e.get("title", "")
-                    if slug in seen_slugs:
-                        continue
-                    # Keep only today + next 2 days
-                    if not any(d in title for d in date_strs):
-                        continue
-                    seen_slugs.add(slug)
-                    # Flatten event's markets so the rest of the pipeline
-                    # (which expects raw market dicts) keeps working.
-                    for m in e.get("markets", []):
-                        m.setdefault("title", title)
-                        m.setdefault("description", title)
-                        m.setdefault("event_slug", slug)
-                        all_events.append(m)
+        for events in per_query_events:
+            for e in events:
+                slug = e.get("slug", "")
+                title = e.get("title", "")
+                if slug in seen_slugs:
+                    continue
+                # Keep only today + next 2 days
+                if not any(d in title for d in date_strs):
+                    continue
+                seen_slugs.add(slug)
+                # Flatten event's markets so the rest of the pipeline
+                # (which expects raw market dicts) keeps working.
+                for m in e.get("markets", []):
+                    m.setdefault("title", title)
+                    m.setdefault("description", title)
+                    m.setdefault("event_slug", slug)
+                    all_events.append(m)
 
         logger.info(
             f"Toplam {len(all_events)} market çekildi "

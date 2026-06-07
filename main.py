@@ -236,6 +236,17 @@ async def get_status():
         db.close()
 
 
+def _safe_parse_ladder(raw):
+    """Safely parse ladder_data JSON. Returns list or empty list on any error."""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
 @app.get("/api/signals")
 async def get_signals():
     """Get active signals and bets with Ladder details.
@@ -323,7 +334,7 @@ async def get_signals():
                     "entry_edge": entry_edge, # UX fix #6: edge at the time of entry
                     "live_edge": live_edge,   # explicit alias for clarity
                     "move_pct": move_pct,     # UX fix #6: (current âˆ’ entry) / entry
-                    "ladder_orders": (lambda: (json.loads(b.ladder_data) if isinstance(b.ladder_data, str) and b.ladder_data.strip().startswith('[') else []) if b.ladder_data else [])(),
+                    "ladder_orders": _safe_parse_ladder(bet.ladder_data),
                     "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
                     "resolution_date": res_date.isoformat() if res_date else None,
                     "status": bet.status if bet.status else "UNKNOWN",

@@ -575,9 +575,15 @@ async def reset_bot():
         deleted_analyses,
     )
 
+    # 4. Auto-restart the background loops. stop_bot() at the top of
+    #    this handler halts the cycle; without a restart the user has
+    #    to click Start manually, which is the "Start button dead
+    #    after Reset" UX bug we are closing here.
+    await start_bot()
+
     return {
         "status": "reset",
-        "message": "Bot sÄ±fÄ±rlandÄ±",
+        "message": "Bot sÄ±fÄ±rlandÄ± ve yeniden başlatıldı",
         "cancelled_bets": int(cancelled_bets or 0),
         "deleted_analyses": int(deleted_analyses or 0),
     }

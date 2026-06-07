@@ -235,7 +235,21 @@ async def get_status():
 
 @app.get("/api/signals")
 async def get_signals():
-    """Get active signals and bets with Ladder details — no hardcoded edge/fair_value."""
+    """Get active signals and bets with Ladder details.
+
+    Edge semantics (UX fix #6):
+    - ``entry_edge``   = the edge that triggered the bet
+                         (model_prob_at_entry − market_price_at_entry),
+                         taken from the originating Analysis row.
+    - ``live_edge``    = current "would I enter at today's price?" edge
+                         (model_prob_now − current_price), kept under
+                         the legacy ``edge`` key for backward compat.
+    - ``move_pct``     = (current − entry) / entry, signed — useful at
+                         a glance to see how much the price has run
+                         since entry. Positive = good for a YES bet.
+    For a freshly placed bet the entry_edge explains why we bought;
+    for a held bet the live_edge is the "still a good trade?" signal.
+    """
     db = get_db_session()
     try:
         active_bets = db.query(Bet).filter(Bet.status.in_(["active", "open", "placed", "pending"])).all()
@@ -252,9 +266,12 @@ async def get_signals():
             current = float(current) if current is not None else None
             # Real fair value from cached analysis if available; else skip
             fair_value = None
-            edge = None
+            live_edge = None
+            entry_edge = None
+            move_pct = None
             try:
                 from database.models import Analysis
+                # Latest analysis (live "should I enter now?" signal)
                 latest = (
                     db.query(Analysis)
                     .filter(Analysis.market_id == bet.market_id)
@@ -264,7 +281,26 @@ async def get_signals():
                 if latest is not None:
                     fair_value = float(latest.estimated_probability)
                     if current is not None:
-                        edge = fair_value - current
+                        live_edge = fair_value - current
+
+                # Originating analysis (the one that triggered this bet).
+                # Falls back to the latest if analysis_id is missing.
+                if bet.analysis_id is not None:
+                    origin = (
+                        db.query(Analysis)
+                        .filter(Analysis.id == bet.analysis_id)
+                        .first()
+                    )
+                else:
+                    origin = None
+                if origin is not None and origin.edge is not None:
+                    entry_edge = float(origin.edge)
+
+                # Move % since entry — derived directly from prices so
+                # the UI can show price momentum even without an analysis
+                # row present.
+                if entry is not None and current is not None and entry > 0:
+                    move_pct = (current - entry) / entry
             except Exception:
                 pass
             signals.append(
@@ -280,7 +316,10 @@ async def get_signals():
                         float(bet.unrealized_pnl) if bet.unrealized_pnl is not None else 0.0
                     ),
                     "fair_value": fair_value,
-                    "edge": edge,
+                    "edge": live_edge,        # legacy key — now means "live edge"
+                    "entry_edge": entry_edge, # UX fix #6: edge at the time of entry
+                    "live_edge": live_edge,   # explicit alias for clarity
+                    "move_pct": move_pct,     # UX fix #6: (current − entry) / entry
                     "ladder_orders": [],
                     "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
                     "resolution_date": res_date.isoformat() if res_date else None,

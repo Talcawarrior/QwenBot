@@ -66,17 +66,23 @@ class Settler:
 
             bet.settled_at = datetime.utcnow()
 
-            # Update portfolio (backward compatible)
+            # Update portfolio with correct cash accounting:
+            # - WIN:  credit full payout (stake was already deducted at placement)
+            # - LOSS: nothing to credit (stake was already deducted at placement)
+            # PnL is tracked for analytics but cash flow determines the balance.
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
             if portfolio:
                 portfolio.total_realized_pnl += bet.pnl
-                portfolio.cash_balance += bet.pnl
-                portfolio.total_value = (portfolio.total_value or 1000.0) + bet.pnl
-                portfolio.current_value = (portfolio.current_value or 1000.0) + bet.pnl
                 if result == "WIN":
+                    # Credit full payout back to cash (stake was deducted at placement)
+                    payout = bet.amount / bet.price if bet.price and bet.price > 0 else bet.amount
+                    portfolio.cash_balance += payout
                     portfolio.total_won += 1
                 else:
+                    # Loss: stake already deducted at placement, nothing to credit
                     portfolio.total_lost += 1
+                portfolio.total_value = portfolio.cash_balance
+                portfolio.current_value = portfolio.cash_balance
                 portfolio.daily_pnl += bet.pnl
 
             logger.info(
@@ -196,14 +202,12 @@ class SettlementEngine:
 
     def update_portfolio_after_settlement(self, portfolio, pnl: float, is_win: bool):
         portfolio.total_realized_pnl += pnl
-        portfolio.cash_balance += pnl
-        portfolio.total_value = (portfolio.total_value or 1000.0) + pnl
-        portfolio.current_value = (portfolio.current_value or 1000.0) + pnl
         if is_win:
             portfolio.total_won += 1
         else:
             portfolio.total_lost += 1
         portfolio.daily_pnl += pnl
+        # total_value and current_value are set in the caller based on cash_balance
 
     async def settle_bets(self):
         return self.settler.settle_all().get("win", 0) + self.settler.settle_all().get("loss", 0)

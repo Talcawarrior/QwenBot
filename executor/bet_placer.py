@@ -2,10 +2,10 @@
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from sqlalchemy import func
 from database.db import get_session
-from database.models import Analysis, Bet, WeatherMarket
+from database.models import Analysis, Bet, WeatherMarket, Portfolio
 from config.settings import bot_config, Config
 
 logger = logging.getLogger("EXECUTOR_BET_PLACER")
@@ -73,7 +73,7 @@ class BetPlacer:
                 return None
 
             # Guard: skip resolved markets
-            if market.target_date and market.target_date <= datetime.now(timezone.utc):
+            if market.target_date and market.target_date <= datetime.utcnow():
                 logger.debug(f"Market {market.id}: already resolved, skipping bet")
                 return None
 
@@ -240,7 +240,7 @@ class BetPlacer:
 
                     bet.order_id = order.get("orderID")
                     bet.status = "placed"
-                    bet.placed_at = datetime.now(timezone.utc)
+                    bet.placed_at = datetime.utcnow()
 
                     market.status = "bet_placed"
                     logger.info(
@@ -264,6 +264,14 @@ class BetPlacer:
                     f"({shares:.2f} shares)"
                 )
 
+            # Deduct stake from portfolio cash balance so that portfolio
+            # accurately reflects available cash while bets are active.
+            portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
+            if portfolio:
+                portfolio.cash_balance -= proposed_amount
+                portfolio.current_value = portfolio.cash_balance
+                portfolio.total_value = portfolio.cash_balance
+                portfolio.last_updated = datetime.utcnow()
             session.add(bet)
             session.commit()
             return bet

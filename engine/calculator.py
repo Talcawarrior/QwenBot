@@ -276,7 +276,11 @@ class WeatherEngine:
         except Exception:
             return s.min_edge
 
-        if hours_left >= s.edge_escalation_hours:
+        # 60s tolerance for the boundary: a market created with
+        # resolution_date=now+esc_h drifts microseconds by the time the
+        # function runs, producing 0.01+1e-9 on CI. A 1-minute window
+        # makes the boundary deterministic.
+        if hours_left >= s.edge_escalation_hours - (60.0 / 3600.0):
             return s.min_edge
         if hours_left <= 0:
             return s.min_edge * s.edge_escalation_multiplier

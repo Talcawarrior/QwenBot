@@ -110,6 +110,18 @@ class Calculator:
                 logger.warning(f"Market eksik bilgi: {market_id}")
                 return None
 
+            # Skip already-resolved markets (lookahead bias guard)
+            if market.target_date <= datetime.utcnow():
+                logger.debug(f"Market {market_id}: target_date {market.target_date} already passed, skipping")
+                return None
+
+            # Skip markets with no real liquidity (price too low for paper realism)
+            market_price = market.yes_price or 0.5
+            min_price = getattr(bot_config, "MIN_ENTRY_PRICE", 0.01) if hasattr(bot_config, "MIN_ENTRY_PRICE") else 0.01
+            if market_price < min_price:
+                logger.debug(f"Market {market_id}: price {market_price:.4f} < min {min_price}, skipping")
+                return None
+
             # En son tahminleri al
             forecasts = session.query(WeatherForecast).filter(
                 WeatherForecast.market_id == market_id,

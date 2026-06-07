@@ -110,6 +110,9 @@ class Config:
     MAX_EXPOSURE_PCT = float(os.getenv("MAX_EXPOSURE_PCT", "0.25"))
     MAX_BET_PCT = float(os.getenv("MAX_BET_PCT", "0.03"))
     MIN_BET_SIZE = float(os.getenv("MIN_BET_SIZE", "1.0"))
+    # Minimum market price to place a bet. Bids at 0.001 have no real
+    # liquidity on Polymarket; paper PnL at those levels is fantasy.
+    MIN_ENTRY_PRICE = float(os.getenv("MIN_ENTRY_PRICE", "0.01"))
     # Fixed dollar amount per bet, set via FLAT_BET_USD env var.
     # 0.0 (default) means 'use the calculator's Kelly-based recommendation'.
     # > 0.0 means 'every bet is exactly this many USD, ignore Kelly sizing'.

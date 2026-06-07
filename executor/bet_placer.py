@@ -72,6 +72,18 @@ class BetPlacer:
             if not market:
                 return None
 
+            # Guard: skip resolved markets
+            if market.target_date and market.target_date <= datetime.now(timezone.utc):
+                logger.debug(f"Market {market.id}: already resolved, skipping bet")
+                return None
+
+            # Guard: skip markets with no real liquidity
+            market_price = float(market.yes_price or 0.5)
+            min_price = float(getattr(self.risk_manager.config, "MIN_ENTRY_PRICE", 0.01))
+            if market_price < min_price:
+                logger.debug(f"Market {market.id}: price {market_price:.4f} < min {min_price}, skipping bet")
+                return None
+
             # Zaten bet aÃ§Ä±lmÄ±ÅŸ mÄ±?
             existing = session.query(Bet).filter(
                 Bet.market_id == analysis.market_id,

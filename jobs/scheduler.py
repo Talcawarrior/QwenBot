@@ -1,6 +1,7 @@
 """Independent scheduled job executors."""
 
 import logging
+from datetime import datetime, timezone
 from database.db import get_session
 from database.models import Bet, WeatherMarket
 
@@ -40,6 +41,7 @@ def run_analyze():
         markets = session.query(WeatherMarket).filter(
             WeatherMarket.status == "open",
             WeatherMarket.city.isnot(None),
+            WeatherMarket.target_date > datetime.now(timezone.utc),
         ).all()
         market_ids = [m.id for m in markets]
 

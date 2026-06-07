@@ -73,15 +73,16 @@ class BetPlacer:
                 return None
 
             # Guard: skip resolved markets
-            if market.target_date and market.target_date <= datetime.now(timezone.utc).replace(tzinfo=None):
-                logger.debug(f"Market {market.id}: already resolved, skipping bet")
+            _now = datetime.now(timezone.utc).replace(tzinfo=None)
+            if market.target_date and market.target_date <= _now:
+                logger.debug(f"Market {market.id}: target_date passed, skipping")
                 return None
 
             # Guard: skip markets with no real liquidity
             market_price = float(market.yes_price or 0.5)
             min_price = float(getattr(self.risk_manager.config, "MIN_ENTRY_PRICE", 0.01))
             if market_price < min_price:
-                logger.debug(f"Market {market.id}: price {market_price:.4f} < min {min_price}, skipping bet")
+                logger.debug(f"Market {market.id}: target_date passed, skipping")
                 return None
 
             # Zaten bet açılmış mı?
@@ -90,12 +91,18 @@ class BetPlacer:
                 Bet.status.in_(["pending", "placed"])
             ).first()
             if existing:
-                logger.info(f"Market {market.id} için zaten bet var")
+                logger.info(f"Market {market.id} already has a bet")
                 return None
 
             # ------------------------------------------------------------------
+            # Sync RiskManager portfolio_value from DB so risk caps reflect
+            # actual portfolio state, not stale in-memory value.
+            _pf = session.query(Portfolio).filter(Portfolio.id == 1).first()
+            if _pf and _pf.total_value is not None:
+                self.risk_manager.update_portfolio(float(_pf.total_value))
+
             # Risk checks. These are enforced HERE (not in run_place_bets)
-            # so every entry point "” scheduler, manual API call, CLI "” is
+            # so every entry point "" scheduler, manual API call, CLI "" is
             # guarded by the same hard caps. A previous version of this
             # module skipped all caps and let exposure balloon to 35x the
             # smart-pool ceiling, which is what surfaced the
@@ -244,13 +251,13 @@ class BetPlacer:
 
                     market.status = "bet_placed"
                     logger.info(
-                        f"ðŸŽ¯ LIVE BET AÃ‡ILDI: {market.id} | "
+                        f"LIVE BET OPENED: {market.id} | "
                         f"{analysis.recommended_side} ${bet.amount:.2f} @ {bet.price}"
                     )
                 except Exception as e:
                     bet.status = "failed"
                     bet.error_message = str(e)
-                    logger.error(f"âŒ Live Bet açılamadı {market.id}: {e}")
+                    logger.error(f"Live Bet failed {market.id}: {e}")
             else:
                 # Simulated / Paper trade fallback. Also covers the case
                 # where Config.DRY_RUN is true (defense-in-depth).
@@ -259,7 +266,7 @@ class BetPlacer:
                 bet.placed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 market.status = "bet_placed"
                 logger.info(
-                    f"ðŸ“ PAPER BET AÃ‡ILDI: {market.id} | "
+                    f"PAPER BET OPENED: {market.id} | "
                     f"{analysis.recommended_side} ${bet.amount:.2f} @ {bet.price} "
                     f"({shares:.2f} shares)"
                 )

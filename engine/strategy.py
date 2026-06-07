@@ -1,4 +1,4 @@
-﻿"""Sinyal analizi, Kelly kasa yÃ¶netimi, risk kontrolÃ¼ ve SIA kendi kendini geliÅŸtiren algoritma (Self-Improving Algorithm)."""
+﻿"""Sinyal analizi, Kelly kasa yönetimi, risk kontrolü ve SIA kendi kendini geliştiren algoritma (Self-Improving Algorithm)."""
 
 import json
 import logging

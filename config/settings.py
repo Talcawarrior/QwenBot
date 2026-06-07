@@ -1,4 +1,4 @@
-"""PolyMarket Ultimate Hybrid Weather Bot - Configuration Dataclasses & Legacy Config."""
+﻿"""PolyMarket Ultimate Hybrid Weather Bot - Configuration Dataclasses & Legacy Config."""
 
 import os
 from dataclasses import dataclass
@@ -33,7 +33,7 @@ class PolymarketConfig:
     def __post_init__(self):
         self.weather_keywords = [
             "temperature", "heat", "cold", "snow", "rain",
-            "hurricane", "storm", "weather", "°F", "°C",
+            "hurricane", "storm", "weather", "Â°F", "Â°C",
             "celsius", "fahrenheit", "precipitation", "highest"
         ]
 
@@ -62,7 +62,7 @@ class StrategyConfig:
                                     # (it's always 0). The current_price already reflects
                                     # real market depth.
     kelly_fraction: float = 0.15    # Quarter/Fractional Kelly (aligned with QwenBot 15%)
-    min_sources: int = 1            # En az 1 hava kaynağı (aligned for Open-Meteo free tier)
+    min_sources: int = 1            # En az 1 hava kaynaÄŸÄ± (aligned for Open-Meteo free tier)
     # Bot scope: today + 1 + 2 days ahead (0..2 inclusive).
     # Tightened from 14 to 2 so the bot only trades near-term markets
     # where the public weather ensemble (GFS/ECMWF/ICON/...) is still
@@ -206,7 +206,11 @@ class Config:
     }
     OPEN_METEO_BASE = "https://api.open-meteo.com/v1/forecast"
     FEE_DRAG = 0.005
-    MIN_EDGE = 0.03
+    # NOTE: minimum-edge threshold is NOT defined on Config on purpose.
+    # The single source of truth is `bot_config.strategy.min_edge` (default 0.01 = 1%).
+    # `engine.calculator.py` reads from there at lines 179 & 187; the previous
+    # `Config.MIN_EDGE = 0.03` constant was dead code (never read anywhere) and
+    # caused "which one is canonical?" confusion in code review.
     TOTAL_EXPOSURE_PCT = 0.25
 
     @property

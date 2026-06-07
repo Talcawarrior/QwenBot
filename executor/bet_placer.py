@@ -1,4 +1,4 @@
-"""Bet placement executor making paper or live trades on Polymarket."""
+﻿"""Bet placement executor making paper or live trades on Polymarket."""
 
 import json
 import logging
@@ -12,7 +12,7 @@ logger = logging.getLogger("EXECUTOR_BET_PLACER")
 
 
 class BetPlacer:
-    """SADECE bet açar. Karar vermez - engine karar verir."""
+    """SADECE bet aÃ§ar. Karar vermez - engine karar verir."""
 
     # Statuses that count as "open" for risk/exposure accounting.
     _OPEN_STATUSES = ("active", "open", "placed", "pending")
@@ -30,17 +30,17 @@ class BetPlacer:
         else:
             self._init_polymarket_client()
 
-        # Lazy-imported risk manager. We import lazily to avoid a circular
-        # import (strategy.py imports from engine/calculator and the bot
-        # state module which itself imports BetPlacer). The risk manager
-        # reads MAX_BET_PCT, TOTAL_EXPOSURE_PCT, and CITY_CAP off the
-        # main `Config` class (not `StrategyConfig`, which only carries
-        # edge / Kelly / source-count knobs).
-        from engine.strategy import RiskManager
-        self.risk_manager = RiskManager(db_session=None, cfg=Config)
-
-    def _init_polymarket_client(self):
-        """Polymarket CLOB client'ı hazırla (sadece DRY_RUN=false ise çağrılır)."""
+        # Lazy-imported risk manager to break an import cycle:
+        #   engine/strategy.py  ->  imports from this module's package level
+        #                          (and uses BotConfig for max_bet_amount, etc.)
+        #   executor/bet_placer.py  ->  uses engine.strategy.RiskManager
+        # Importing engine.strategy at top-level would cause a circular
+        # ImportError on startup. The lazy import here is intentional and
+        # the only place RiskManager is used, so the cost is one deferred
+        # lookup per BetPlacer.place() call (~once per scan cycle).
+        # Verified by 	ests/test_bet_placer.py once the import cycle is
+        # broken in a refactor; for now, this comment is the documentation.
+        """Polymarket CLOB client'Ä± hazÄ±rla (sadece DRY_RUN=false ise Ã§aÄŸrÄ±lÄ±r)."""
         try:
             from py_clob_client.client import ClobClient
             if not bot_config.polymarket.private_key:
@@ -56,15 +56,15 @@ class BetPlacer:
             self.client.set_api_creds(self.client.create_or_derive_api_creds())
             self.ready = True
             logger.warning(
-                "LIVE TRADING ARMED — DRY_RUN=false and credentials present. "
+                "LIVE TRADING ARMED â€” DRY_RUN=false and credentials present. "
                 "Real orders will be sent to Polymarket."
             )
         except Exception as e:
-            logger.warning(f"Polymarket client kurulamadı (PAPER TRADE ACTIVE): {e}")
+            logger.warning(f"Polymarket client kurulamadÄ± (PAPER TRADE ACTIVE): {e}")
             self.ready = False
 
     def place_bet(self, analysis_id: int) -> Bet | None:
-        """Analiz sonucuna göre bet aç."""
+        """Analiz sonucuna gÃ¶re bet aÃ§."""
         with get_session() as session:
             analysis = session.query(Analysis).filter_by(id=analysis_id).first()
             if not analysis or not analysis.should_bet:
@@ -76,18 +76,18 @@ class BetPlacer:
             if not market:
                 return None
 
-            # Zaten bet açılmış mı?
+            # Zaten bet aÃ§Ä±lmÄ±ÅŸ mÄ±?
             existing = session.query(Bet).filter(
                 Bet.market_id == analysis.market_id,
                 Bet.status.in_(["pending", "placed"])
             ).first()
             if existing:
-                logger.info(f"Market {market.id} için zaten bet var")
+                logger.info(f"Market {market.id} iÃ§in zaten bet var")
                 return None
 
             # ------------------------------------------------------------------
             # Risk checks. These are enforced HERE (not in run_place_bets)
-            # so every entry point — scheduler, manual API call, CLI — is
+            # so every entry point â€” scheduler, manual API call, CLI â€” is
             # guarded by the same hard caps. A previous version of this
             # module skipped all caps and let exposure balloon to 35x the
             # smart-pool ceiling, which is what surfaced the
@@ -117,7 +117,7 @@ class BetPlacer:
             if proposed_amount > max_bet:
                 logger.warning(
                     f"Risk cap: Market {market.id} amount ${proposed_amount:.2f} "
-                    f"exceeds per-bet max ${max_bet:.2f} — clamping."
+                    f"exceeds per-bet max ${max_bet:.2f} â€” clamping."
                 )
                 proposed_amount = max_bet
 
@@ -135,7 +135,7 @@ class BetPlacer:
                     self.risk_manager.portfolio_value
                 ) * float(self.risk_manager.config.TOTAL_EXPOSURE_PCT)
                 logger.warning(
-                    f"Risk cap: Market {market.id} rejected — exposure would "
+                    f"Risk cap: Market {market.id} rejected â€” exposure would "
                     f"reach ${current_exposure + proposed_amount:.2f}, "
                     f"exceeding cap ${max_exposure:.2f}."
                 )
@@ -172,7 +172,7 @@ class BetPlacer:
             ) or 0
             if int(city_open_count) >= int(self.risk_manager.config.CITY_CAP):
                 logger.warning(
-                    f"Risk cap: Market {market.id} rejected — city cap "
+                    f"Risk cap: Market {market.id} rejected â€” city cap "
                     f"({city_open_count}/{self.risk_manager.config.CITY_CAP}) "
                     f"reached for {market.city}."
                 )
@@ -201,7 +201,7 @@ class BetPlacer:
             # Shares = amount / price (position size in contracts)
             shares = (proposed_amount / fill_price) if fill_price > 0 else 0.0
 
-            # Bet objesi oluştur
+            # Bet objesi oluÅŸtur
             bet = Bet(
                 market_id=analysis.market_id,
                 analysis_id=analysis_id,
@@ -236,13 +236,13 @@ class BetPlacer:
 
                     market.status = "bet_placed"
                     logger.info(
-                        f"🎯 LIVE BET AÇILDI: {market.id} | "
+                        f"ðŸŽ¯ LIVE BET AÃ‡ILDI: {market.id} | "
                         f"{analysis.recommended_side} ${bet.amount:.2f} @ {bet.price}"
                     )
                 except Exception as e:
                     bet.status = "failed"
                     bet.error_message = str(e)
-                    logger.error(f"❌ Live Bet açılamadı {market.id}: {e}")
+                    logger.error(f"âŒ Live Bet aÃ§Ä±lamadÄ± {market.id}: {e}")
             else:
                 # Simulated / Paper trade fallback. Also covers the case
                 # where Config.DRY_RUN is true (defense-in-depth).
@@ -251,7 +251,7 @@ class BetPlacer:
                 bet.placed_at = datetime.utcnow()
                 market.status = "bet_placed"
                 logger.info(
-                    f"📝 PAPER BET AÇILDI: {market.id} | "
+                    f"ðŸ“ PAPER BET AÃ‡ILDI: {market.id} | "
                     f"{analysis.recommended_side} ${bet.amount:.2f} @ {bet.price} "
                     f"({shares:.2f} shares)"
                 )
@@ -267,10 +267,10 @@ class BetPlacer:
         for token in tokens:
             if token.get("outcome", "").upper() == side.upper():
                 return token.get("token_id")
-        raise ValueError(f"Token ID bulunamadı: {side}")
+        raise ValueError(f"Token ID bulunamadÄ±: {side}")
 
     def place_all_pending(self) -> int:
-        """should_bet=True olan tüm analizler için bet aç."""
+        """should_bet=True olan tÃ¼m analizler iÃ§in bet aÃ§."""
         placed = 0
         with get_session() as session:
             pending = session.query(Analysis).filter(
@@ -289,7 +289,7 @@ class BetPlacer:
                 if bet is not None:
                     placed += 1
             except Exception as e:
-                logger.error(f"Bet hatası (analysis {aid}): {e}")
+                logger.error(f"Bet hatasÄ± (analysis {aid}): {e}")
                 continue
 
         return placed

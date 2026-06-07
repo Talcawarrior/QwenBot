@@ -1,8 +1,15 @@
 ﻿"""Tests for the auto-restart-after-reset UX fix."""
 import pytest
 from unittest.mock import AsyncMock, patch
-from main import app
-from fastapi.testclient import TestClient
+
+# Match the pattern used by tests/test_api_integration.py: the FastAPI
+# TestClient depends on httpx (or the new httpx2 fork), which isn't in
+# our minimal CI runner's install. Skip cleanly when it's missing
+# instead of failing collection.
+httpx = pytest.importorskip("httpx", reason="httpx not installed (needed for FastAPI TestClient)")
+from fastapi.testclient import TestClient  # noqa: E402
+
+from main import app  # noqa: E402
 
 
 @pytest.fixture
@@ -20,9 +27,3 @@ def test_reset_auto_restarts_bot(client):
         assert body['status'] == 'reset'
         # start_bot must have been called
         assert mock_start.called
-        # Message reflects auto-restart. We don't pin the exact
-        # wording because the original message is localized
-        # ("sıfırlandı") and we don't want this test to break every
-        # time the user rewords the response. We just assert the
-        # response status and that start_bot was awaited.
-        assert body['status'] == 'reset'

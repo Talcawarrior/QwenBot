@@ -81,6 +81,7 @@ class WeatherForecast(Base):
     predicted_value = Column(Float)                     # 92.5
     confidence = Column(Float)                          # Varsa
 
+    model_weight = Column(Float, default=0.0)
     fetched_at = Column(DateTime, default=datetime.utcnow)
     raw_data = Column(Text)
 

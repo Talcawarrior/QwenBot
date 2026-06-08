@@ -1,4 +1,4 @@
-﻿"""Matematiksel olasılık, Kelly kriteri hesaplayıcısı ve WeatherEngine konsensüs birleşimi."""
+"""Matematiksel olasılık, Kelly kriteri hesaplayıcısı ve WeatherEngine konsensüs birleşimi."""
 
 import math
 import logging
@@ -8,6 +8,7 @@ import aiohttp
 from config.settings import config, bot_config, Config
 from database.db import get_session
 from database.models import WeatherMarket, WeatherForecast, Analysis
+from utils.price_sanity import is_valid_binary_price
 
 logger = logging.getLogger("ENGINE_CALCULATOR")
 
@@ -108,6 +109,14 @@ class Calculator:
 
             if not all([market.city, market.threshold, market.target_date, market.metric]):
                 logger.warning(f"Market eksik bilgi: {market_id}")
+                return None
+
+            # Price sanity check - skip invalid binary markets
+            if not is_valid_binary_price(market.yes_price or 0, market.no_price or 0):
+                logger.debug(
+                    f"Market {market_id}: invalid prices "
+                    f"yes={market.yes_price}, no={market.no_price}, skipping"
+                )
                 return None
 
             # Skip already-resolved markets (lookahead bias guard)
@@ -309,6 +318,13 @@ OPEN_METEO_MODEL_MAP = {
     "meteofrance_seamless": "meteofrance_seamless",
 }
 
+METRIC_MAP = {
+    "temperature_max": "temperature_2m_max",
+    "temperature_min": "temperature_2m_min",
+    "temperature_2m_max": "temperature_2m_max",
+    "temperature_2m_min": "temperature_2m_min",
+}
+
 
 class WeatherEngine:
     """Weather engine consensus calculator (FastAPI / test compatibility wrapper)."""
@@ -369,7 +385,13 @@ class WeatherEngine:
             self.session = None
 
     async def get_multi_model_forecast(
-        self, city_code: str, latitude: float, longitude: float, target_date: Optional[datetime] = None
+        self,
+        city_code: str,
+        latitude: float,
+        longitude: float,
+        target_date: Optional[datetime] = None,
+        market_id: str = "",
+        db_session=None,
     ) -> Optional[Dict]:
         if not city_code or (latitude == 0 and longitude == 0):
             return None
@@ -436,6 +458,16 @@ class WeatherEngine:
                 weighted_var = sum(self.model_weights.get(m, 0.0) * (t - weighted_mean)**2 for m, t in model_temps.items()) / total_weight
                 weighted_std = max(weighted_var ** 0.5, 0.5)
 
+                if db_session is not None and market_id:
+                    from database.models import WeatherForecast
+                    for mn, tmp in model_temps.items():
+                        db_session.add(WeatherForecast(market_id=market_id, city=city_code, lat=latitude, lon=longitude, target_date=target_date, metric="temperature_2m_max", source=mn, predicted_value=float(tmp), model_weight=self.model_weights.get(mn, 0.0), fetched_at=datetime.now(timezone.utc).replace(tzinfo=None), raw_data=str({"model": mn, "temp": tmp, "ensemble": True})))
+                    try:
+                        db_session.commit()
+                    except Exception:
+                        db_session.rollback()
+                    logger.info("Ensemble persisted: %s models, market=%s", len(model_temps), market_id)
+
                 return {
                     "weighted_mean": weighted_mean,
                     "weighted_std": weighted_std,
@@ -446,7 +478,36 @@ class WeatherEngine:
         except Exception:
             return None
 
-    def calculate_probability_above(self, strike_temp: float, consensus: Dict) -> float:
+    def _db_consensus(self, market_id: str) -> Optional[Dict]:
+        if not market_id or not self.db_session_factory:
+            return None
+        db = self.db_session_factory()
+        try:
+            from database.models import WeatherForecast
+            fcs = db.query(WeatherForecast).filter(WeatherForecast.market_id == market_id).order_by(WeatherForecast.fetched_at.desc()).limit(30).all()
+            if not fcs:
+                return None
+            lat = {}
+            for f in fcs:
+                if f.source not in lat:
+                    lat[f.source] = (f.predicted_value, self.model_weights.get(f.source, 0.0))
+            tw = sum(w for _, w in lat.values())
+            if tw <= 0:
+                vs = [v for v, _ in lat.values()]
+                m = sum(vs) / len(vs)
+                s = max((sum((v-m)**2 for v in vs)/len(vs))**0.5, 0.5) if len(vs)>1 else 1.0
+                return {"weighted_mean": m, "weighted_std": s}
+            wm = sum(v*w for v,w in lat.values()) / tw
+            wv = sum(w*(v-wm)**2 for v,w in lat.values()) / tw
+            return {"weighted_mean": wm, "weighted_std": max(wv**0.5, 0.5)}
+        except Exception:
+            return None
+        finally:
+            db.close()
+
+    def calculate_probability_above(self, strike_temp: float, consensus=None, market_id=""):
+        if not consensus:
+            consensus = self._db_consensus(market_id)
         if not consensus:
             return 0.5
         mean = consensus["weighted_mean"]
@@ -456,7 +517,9 @@ class WeatherEngine:
             return 1.0 - norm.cdf(z)
         return 1.0 - self._normal_cdf(z)
 
-    def calculate_probability_below(self, strike_temp: float, consensus: Dict) -> float:
+    def calculate_probability_below(self, strike_temp: float, consensus=None, market_id=""):
+        if not consensus:
+            consensus = self._db_consensus(market_id)
         if not consensus:
             return 0.5
         mean = consensus["weighted_mean"]

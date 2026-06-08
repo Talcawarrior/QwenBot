@@ -260,28 +260,73 @@ class MeteoFetcher:
         return saved
 
     def fetch_all_markets(self) -> int:
-        """Tüm açık marketler için hava verisi çek."""
+        """Fetch ensemble forecast for all open markets.
+
+        Tries WeatherEngine 8-model ensemble first.
+        Falls back to MeteoFetcher backup (default Open-Meteo + WeatherAPI).
+        """
+        from engine.calculator import WeatherEngine
+        import asyncio
+
         total = 0
         with get_session() as session:
-            open_markets = session.query(WeatherMarket).filter(
-                WeatherMarket.status == "open",
-                WeatherMarket.city.isnot(None),
-                WeatherMarket.target_date.isnot(None),
-                WeatherMarket.metric.isnot(None),
-            ).all()
-
-            # Detach from session
+            open_markets = (
+                session.query(WeatherMarket)
+                .filter(
+                    WeatherMarket.status == "open",
+                    WeatherMarket.city.isnot(None),
+                    WeatherMarket.target_date.isnot(None),
+                    WeatherMarket.metric.isnot(None),
+                )
+                .all()
+            )
             markets_data = [
-                (m.id, m.city, m.target_date, m.metric)
+                (m.id, m.city or "", m.city_code or "", m.target_date,
+                 m.metric or "", m.latitude or 0.0, m.longitude or 0.0)
                 for m in open_markets
             ]
 
-        for mid, city, target_date, metric in markets_data:
+        we = WeatherEngine(db_session_factory=get_session)
+
+        for mid, city, city_code, target_date, metric, lat, lon in markets_data:
             try:
+                if lat == 0.0 and lon == 0.0:
+                    count = self.fetch_for_market(mid, city, target_date, metric)
+                    total += count
+                    continue
+
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        result = loop.run_until_complete(
+                            we.get_multi_model_forecast(
+                                city_code=city_code,
+                                latitude=lat,
+                                longitude=lon,
+                                target_date=target_date,
+                                market_id=mid,
+                                db_session=session,
+                            )
+                        )
+                    finally:
+                        loop.close()
+
+                    if result and result.get("model_count", 0) >= 3:
+                        total += result["model_count"]
+                        logger.info(
+                            "Ensemble OK: %s (%s models)", mid, result["model_count"]
+                        )
+                        continue
+                except Exception as e:
+                    logger.debug("Ensemble failed for %s: %s", mid, e)
+
                 count = self.fetch_for_market(mid, city, target_date, metric)
                 total += count
+                logger.info("Backup fetch: %s (%s sources)", mid, count)
+
             except Exception as e:
-                logger.error(f"Market {mid} için veri çekilemedi: {e}")
+                logger.error("Market %s forecast error: %s", mid, e)
                 continue
 
         return total

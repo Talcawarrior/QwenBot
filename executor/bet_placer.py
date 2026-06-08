@@ -178,7 +178,7 @@ class BetPlacer:
             # Cap 3: city cap (CITY_CAP per city).
             city_key = (market.city or "").lower()
             city_open_count = (
-                session.query(func.count(Bet.id))
+                session.query(func.count(Bet.id))  # pylint: disable=not-callable
                 .join(WeatherMarket, Bet.market_id == WeatherMarket.id)
                 .filter(
                     Bet.status.in_(self._OPEN_STATUSES),

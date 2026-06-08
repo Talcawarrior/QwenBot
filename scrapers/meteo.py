@@ -79,6 +79,15 @@ def _throttle(host: str) -> None:
 class MeteoFetcher:
     """Fetches real-time weather forecasts and saves to weather_forecasts."""
 
+    def __init__(self):
+        self._async_client = None
+
+    async def close_session(self):
+        """Close the AsyncHttpClient aiohttp session (if any)."""
+        client = getattr(self, "_async_client", None)
+        if client is not None and hasattr(client, "aclose"):
+            await client.aclose()
+
     CITY_COORDS = {
         "new york": (40.7128, -74.0060),
         "los angeles": (34.0522, -118.2437),

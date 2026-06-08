@@ -22,6 +22,7 @@ class PolymarketScraper:
     def __init__(self):
         self.gamma_url = bot_config.polymarket.gamma_url
         self.keywords = bot_config.polymarket.weather_keywords
+        self._async_client = None
 
     async def init_session(self):
         """Mock init session for test compatibility."""

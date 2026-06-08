@@ -1,0 +1,10 @@
+{
+  "cma_grapes_global": 0.125,
+  "ecmwf_ifs04": 0.125,
+  "gem_seamless": 0.125,
+  "gfs_seamless": 0.125,
+  "icon_seamless": 0.125,
+  "jma_msm": 0.125,
+  "meteofrance_seamless": 0.125,
+  "ukmo_seamless": 0.125
+}

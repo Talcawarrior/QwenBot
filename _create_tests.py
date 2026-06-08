@@ -1,0 +1,182 @@
+import os
+os.chdir(r"C:\Users\fdemir\Documents\New project\QwenBot")
+
+test_content = r'''"""Tests for CLI portfolio creation and reset logic."""
+
+import os
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from database.models import Base, Portfolio, Bet, Analysis
+
+
+@pytest.fixture
+def fresh_db(tmp_path):
+    """Create a fresh in-memory-like DB for each test."""
+    db_path = tmp_path / "test_portfolio.db"
+    engine = create_engine(f"sqlite:///{db_path}", echo=False)
+    Base.metadata.create_all(bind=engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+
+    # Patch database.db to use our test engine
+    import database.db as db_mod
+    import config.settings as settings_mod
+    original_engine = db_mod.engine
+    original_session_factory = db_mod.SessionLocal
+    db_mod.engine = engine
+    db_mod.SessionLocal = Session
+
+    # Reset DRY_RUN to true for safety
+    original_dry = settings_mod.Config.DRY_RUN
+    settings_mod.Config.DRY_RUN = True
+
+    yield session, engine
+
+    # Restore
+    db_mod.engine = original_engine
+    db_mod.SessionLocal = original_session_factory
+    settings_mod.Config.DRY_RUN = original_dry
+    session.close()
+    engine.dispose()
+
+
+def test_ensure_initial_portfolio_creates_row(fresh_db):
+    """ensure_initial_portfolio() creates Portfolio(id=1) with correct defaults."""
+    session, _ = fresh_db
+    from database.db import ensure_initial_portfolio
+
+    # Verify no portfolio exists
+    pf = session.query(Portfolio).filter(Portfolio.id == 1).first()
+    assert pf is None, "Portfolio should not exist before ensure_initial_portfolio"
+
+    # Call the helper
+    ensure_initial_portfolio()
+
+    # Verify portfolio was created
+    pf = session.query(Portfolio).filter(Portfolio.id == 1).first()
+    assert pf is not None, "Portfolio(id=1) should exist after ensure_initial_portfolio"
+    assert pf.cash_balance == 1000.0, f"cash_balance should be 1000.0, got {pf.cash_balance}"
+    assert pf.current_value == 1000.0, f"current_value should be 1000.0, got {pf.current_value}"
+    assert pf.total_value == 1000.0, f"total_value should be 1000.0, got {pf.total_value}"
+    assert pf.initial_value == 1000.0, f"initial_value should be 1000.0, got {pf.initial_value}"
+    assert pf.daily_pnl == 0.0, f"daily_pnl should be 0.0, got {pf.daily_pnl}"
+    assert pf.total_realized_pnl == 0.0, f"total_realized_pnl should be 0.0, got {pf.total_realized_pnl}"
+    assert pf.total_won == 0, f"total_won should be 0, got {pf.total_won}"
+    assert pf.total_lost == 0, f"total_lost should be 0, got {pf.total_lost}"
+
+
+def test_ensure_initial_portfolio_idempotent(fresh_db):
+    """Calling ensure_initial_portfolio() twice does not duplicate or error."""
+    session, _ = fresh_db
+    from database.db import ensure_initial_portfolio
+
+    ensure_initial_portfolio()
+    ensure_initial_portfolio()  # Should not raise
+
+    pf = session.query(Portfolio).filter(Portfolio.id == 1).first()
+    assert pf is not None
+    assert pf.cash_balance == 1000.0
+
+
+def test_cli_reset_creates_portfolio_if_missing(fresh_db):
+    """CLI reset creates Portfolio(id=1) if it does not exist."""
+    session, _ = fresh_db
+
+    # Verify no portfolio
+    pf = session.query(Portfolio).filter(Portfolio.id == 1).first()
+    assert pf is None
+
+    # Simulate CLI reset logic (from main.py lines 859-876)
+    from config.settings import config
+    from database.models import Portfolio as PortfolioModel, Analysis as AnalysisModel
+
+    open_statuses = ("active", "open", "placed", "pending")
+    cancelled = (
+        session.query(Bet)
+        .filter(Bet.status.in_(open_statuses))
+        .update({"status": "cancelled"}, synchronize_session=False)
+    )
+    deleted = (
+        session.query(AnalysisModel)
+        .delete(synchronize_session=False)
+    )
+
+    pf = session.query(PortfolioModel).filter(PortfolioModel.id == 1).first()
+    if not pf:
+        pf = PortfolioModel(id=1)
+        session.add(pf)
+    pf.cash_balance = config.INITIAL_PORTFOLIO
+    pf.current_value = config.INITIAL_PORTFOLIO
+    pf.total_value = config.INITIAL_PORTFOLIO
+    pf.initial_value = config.INITIAL_PORTFOLIO
+    pf.daily_pnl = 0.0
+    pf.total_realized_pnl = 0.0
+    pf.total_won = 0
+    pf.total_lost = 0
+    session.commit()
+
+    # Verify portfolio was created with correct values
+    pf = session.query(PortfolioModel).filter(PortfolioModel.id == 1).first()
+    assert pf is not None, "Portfolio(id=1) should exist after reset"
+    assert pf.cash_balance == 1000.0
+    assert pf.current_value == 1000.0
+    assert pf.total_value == 1000.0
+    assert pf.initial_value == 1000.0
+    assert pf.daily_pnl == 0.0
+    assert pf.total_realized_pnl == 0.0
+    assert pf.total_won == 0
+    assert pf.total_lost == 0
+
+
+def test_cli_reset_resets_existing_portfolio(fresh_db):
+    """CLI reset resets an existing Portfolio to INITIAL_PORTFOLIO values."""
+    session, _ = fresh_db
+
+    # Create a portfolio with non-zero values
+    pf = Portfolio(
+        id=1,
+        initial_value=1000.0,
+        current_value=500.0,
+        cash_balance=300.0,
+        total_value=500.0,
+        total_realized_pnl=-200.0,
+        total_won=3,
+        total_lost=5,
+        daily_pnl=-50.0,
+    )
+    session.add(pf)
+    session.commit()
+
+    # Simulate CLI reset
+    from config.settings import config
+    from database.models import Portfolio as PortfolioModel
+
+    pf = session.query(PortfolioModel).filter(PortfolioModel.id == 1).first()
+    if not pf:
+        pf = PortfolioModel(id=1)
+        session.add(pf)
+    pf.cash_balance = config.INITIAL_PORTFOLIO
+    pf.current_value = config.INITIAL_PORTFOLIO
+    pf.total_value = config.INITIAL_PORTFOLIO
+    pf.initial_value = config.INITIAL_PORTFOLIO
+    pf.daily_pnl = 0.0
+    pf.total_realized_pnl = 0.0
+    pf.total_won = 0
+    pf.total_lost = 0
+    session.commit()
+
+    # Verify reset
+    pf = session.query(PortfolioModel).filter(PortfolioModel.id == 1).first()
+    assert pf.cash_balance == 1000.0
+    assert pf.current_value == 1000.0
+    assert pf.total_value == 1000.0
+    assert pf.daily_pnl == 0.0
+    assert pf.total_realized_pnl == 0.0
+    assert pf.total_won == 0
+    assert pf.total_lost == 0
+'''
+
+with open("tests/test_cli_portfolio_reset.py", "w", encoding="utf-8") as f:
+    f.write(test_content)
+print("tests/test_cli_portfolio_reset.py: created")

@@ -43,6 +43,7 @@ class WeatherMarket(Base):
     target_date = Column(DateTime)                      # 2025-07-04
     latitude = Column(Float)                            # Latitude
     longitude = Column(Float)                           # Longitude
+    market_type = Column(String, nullable=True)         # "HIGH", "LOW", or "RANGE"
 
     # Polymarket fiyatları
     yes_price = Column(Float)                           # 0.35

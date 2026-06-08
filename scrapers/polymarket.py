@@ -133,7 +133,11 @@ class PolymarketScraper:
         return formatted
 
     def _is_weather_market(self, market: dict) -> bool:
-        """Weather market check: BOTH a known city AND a strong weather term required."""
+        """Weather market check: BOTH a known city AND a strong weather term required.
+
+        Only temperature markets are accepted. Precipitation, wind, storm,
+        and humidity markets are explicitly rejected.
+        """
         question = (
             market.get("question", "")
             + " "
@@ -151,11 +155,18 @@ class PolymarketScraper:
         #    happen to share a city name like "Boston Bruins" or "Dallas Cowboys")
         strong_terms = (
             "temperature", "highest", "lowest", "heat", "cold",
-            "snow", "rain", "precipitation", "°F", "°C",
-            "celsius", "fahrenheit", "weather", "humidity",
-            "wind", "storm", "hurricane", "tornado",
+            "°F", "°C", "celsius", "fahrenheit", "weather",
         )
-        return any(term in question for term in strong_terms)
+        if not any(term in question for term in strong_terms):
+            return False
+        # 3) Explicitly reject non-temperature weather markets (rain, snow, storm, etc.)
+        reject_terms = (
+            "rain", "snow", "storm", "hurricane", "tornado",
+            "precipitation", "humidity", "wind", "snowfall", "rainfall",
+        )
+        if any(term in question for term in reject_terms):
+            return False
+        return True
 
     def _parse_market(self, raw: dict) -> dict:
         """Ham marketi yapılandırılmış veriye çevir."""
@@ -201,20 +212,34 @@ class PolymarketScraper:
 
         # Extract city name dynamically from ICAO map keys
         city_name = "Unknown"
-        title_lower = (raw.get("title") or "").lower()
-        question_lower = (raw.get("question") or "").lower()
+        title = raw.get("title", "") or raw.get("question", "")
+        question = raw.get("question", "") or raw.get("description", "") or raw.get("title", "")
+        title_lower = (title or "").lower()
+        question_lower = (question or "").lower()
         for k in config.CITY_ICAO_MAP.keys():
             if k in title_lower or k in question_lower:
                 city_name = k.title()
                 break
 
         if city_name == "Unknown":
-            event_title = raw.get("title") or ""
+            event_title = title or ""
             city_name = (
                 event_title.split(" - ")[0].strip()
                 if event_title and " - " in event_title
                 else (event_title.split()[0] if event_title else "Unknown")
             )
+
+        # Parse structured market metadata
+        target_date = self._extract_date(title)
+        threshold = self._extract_strike(question)
+        metric = (
+            "temperature_max"
+            if "highest" in question_lower or "above" in question_lower
+            else "temperature_min"
+        )
+        city_code = self._extract_city(question)
+        market_type = self._determine_market_type(question)
+        coords = self.get_city_coords(city_code) if city_code else None
 
         # Ensure correct numeric market ID matching the betting and settlement engines
         market_id_val = str(raw.get("id"))
@@ -222,7 +247,7 @@ class PolymarketScraper:
         return {
             "id": market_id_val,
             "condition_id": raw.get("condition_id"),
-            "question": raw.get("question", ""),
+            "question": question,
             "yes_price": yes_price,
             "no_price": no_price,
             "volume": float(raw.get("volume", 0) or 0),
@@ -230,7 +255,14 @@ class PolymarketScraper:
             "end_date": raw.get("end_date_iso") or raw.get("endDate"),
             "raw_data": json.dumps(raw),
             "city_name": city_name,
-            "city": city_name
+            "city": city_name,
+            "target_date": target_date,
+            "threshold": threshold,
+            "metric": metric,
+            "city_code": city_code,
+            "market_type": market_type,
+            "latitude": coords[0] if coords else 0.0,
+            "longitude": coords[1] if coords else 0.0,
         }
 
     def fetch_and_save(self) -> int:
@@ -254,6 +286,18 @@ class PolymarketScraper:
                         id=parsed["id"]
                     ).first()
 
+                    # Skip markets with missing target_date or zero threshold
+                    if parsed["target_date"] is None:
+                        logger.warning(
+                            f"Skipping market {parsed['id']}: no target_date parsed"
+                        )
+                        continue
+                    if parsed["threshold"] == 0.0:
+                        logger.warning(
+                            f"Skipping market {parsed['id']}: threshold is 0.0"
+                        )
+                        continue
+
                     if existing:
                         existing.yes_price = parsed["yes_price"]
                         existing.no_price = parsed["no_price"]
@@ -262,6 +306,12 @@ class PolymarketScraper:
                         existing.city = parsed["city"]
                         existing.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
                         existing.raw_data = parsed["raw_data"]
+                        existing.target_date = parsed["target_date"]
+                        existing.threshold = parsed["threshold"]
+                        existing.metric = parsed["metric"]
+                        existing.city_code = parsed["city_code"]
+                        existing.latitude = parsed["latitude"]
+                        existing.longitude = parsed["longitude"]
                     else:
                         market = WeatherMarket(
                             id=parsed["id"],
@@ -274,7 +324,14 @@ class PolymarketScraper:
                             first_seen=datetime.now(timezone.utc).replace(tzinfo=None),
                             last_updated=datetime.now(timezone.utc).replace(tzinfo=None),
                             raw_data=parsed["raw_data"],
-                            status="open"
+                            status="open",
+                            target_date=parsed["target_date"],
+                            threshold=parsed["threshold"],
+                            metric=parsed["metric"],
+                            city_code=parsed["city_code"],
+                            market_type=parsed["market_type"],
+                            latitude=parsed["latitude"],
+                            longitude=parsed["longitude"],
                         )
                         session.add(market)
                     saved += 1
@@ -328,6 +385,48 @@ class PolymarketScraper:
             "LEBL": (41.2974, 2.0833),
         }
         return coords_map.get(city_code)
+
+    def _extract_date(self, title: str) -> Optional[datetime]:
+        """Parse a date from a market title string.
+
+        Tries three patterns in order:
+          1. "June 9 2026" or "June 9th, 2026"
+          2. "2026-06-09" (ISO)
+          3. "June 9"       (yearless — uses current year)
+
+        Returns a datetime at 23:59:59 on the parsed day, or None.
+        """
+        if not title:
+            return None
+        # Pattern 1: "June 9 2026" or "June 9th, 2026" or "Jun 9 2026"
+        match = re.search(
+            r"([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})", title
+        )
+        if match:
+            month_str, day, year = match.group(1), int(match.group(2)), int(match.group(3))
+            for fmt in ("%B %d %Y", "%b %d %Y"):
+                try:
+                    dt = datetime.strptime(f"{month_str} {day} {year}", fmt)
+                    return dt.replace(hour=23, minute=59, second=59)
+                except ValueError:
+                    continue
+        # Pattern 2: ISO "2026-06-09"
+        match = re.search(r"(\d{4})-(\d{2})-(\d{2})", title)
+        if match:
+            year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            return datetime(year, month, day, 23, 59, 59)
+        # Pattern 3: "June 9" (yearless)
+        match = re.search(r"([A-Za-z]+)\s+(\d{1,2})", title)
+        if match:
+            month_str, day = match.group(1), int(match.group(2))
+            today = datetime.now()
+            for fmt in ("%B %d %Y", "%b %d %Y"):
+                try:
+                    dt = datetime.strptime(f"{month_str} {day} {today.year}", fmt)
+                    return dt.replace(hour=23, minute=59, second=59)
+                except ValueError:
+                    continue
+        return None
 
     def _extract_city(self, text: str) -> str:
         if not text:

@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 # Package Imports
 from config.settings import config
 from config.logging_config import setup_logging
-from database.db import init_db, get_db_session, get_db_session_factory
+from database.db import init_db, get_db_session, get_db_session_factory, ensure_initial_portfolio
 from database.models import Portfolio, WeatherMarket, Bet, Analysis
 from engine.strategy import RiskManager, BettingEngine, SIALoop
 from engine.calculator import WeatherEngine
@@ -84,23 +84,7 @@ async def lifespan(_app: FastAPI):
 
     # Ensure initial portfolio row exists in DB
     try:
-        db = get_db_session()
-        try:
-            portfolio = db.query(Portfolio).filter(Portfolio.id == 1).first()
-            if not portfolio:
-                portfolio = Portfolio(
-                    id=1,
-                    initial_value=state.config.INITIAL_PORTFOLIO,
-                    current_value=state.config.INITIAL_PORTFOLIO,
-                    cash_balance=state.config.INITIAL_PORTFOLIO,
-                    total_value=state.config.INITIAL_PORTFOLIO,
-                    total_realized_pnl=0.0,
-                )
-                db.add(portfolio)
-                db.commit()
-                logger.info("Initial portfolio row created in DB")
-        finally:
-            db.close()
+        ensure_initial_portfolio()
     except Exception as e:
         logger.warning("Portfolio init warning: %s", e)
 
@@ -826,6 +810,7 @@ def run_cli():
     # DB'yi hazırla
     init_db()
     logger.info("Database hazır")
+    ensure_initial_portfolio()
 
     from jobs.scheduler import (
         run_fetch_markets, run_parse_markets, run_fetch_weather,
@@ -872,15 +857,17 @@ def run_cli():
                 .delete(synchronize_session=False)
             )
             pf = db.query(PortfolioModel).filter(PortfolioModel.id == 1).first()
-            if pf:
-                pf.cash_balance = state.config.INITIAL_PORTFOLIO
-                pf.current_value = state.config.INITIAL_PORTFOLIO
-                pf.total_value = state.config.INITIAL_PORTFOLIO
-                pf.initial_value = state.config.INITIAL_PORTFOLIO
-                pf.daily_pnl = 0.0
-                pf.total_realized_pnl = 0.0
-                pf.total_won = 0
-                pf.total_lost = 0
+            if not pf:
+                pf = PortfolioModel(id=1)
+                db.add(pf)
+            pf.cash_balance = state.config.INITIAL_PORTFOLIO
+            pf.current_value = state.config.INITIAL_PORTFOLIO
+            pf.total_value = state.config.INITIAL_PORTFOLIO
+            pf.initial_value = state.config.INITIAL_PORTFOLIO
+            pf.daily_pnl = 0.0
+            pf.total_realized_pnl = 0.0
+            pf.total_won = 0
+            pf.total_lost = 0
             db.commit()
             print(f"Reset complete: cancelled {cancelled} bets, deleted {deleted} analyses, portfolio reset to ${state.config.INITIAL_PORTFOLIO}")
         except Exception as e:

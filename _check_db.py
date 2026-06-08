@@ -1,0 +1,13 @@
+﻿import sqlite3
+conn = sqlite3.connect('data/bot.db')
+c = conn.cursor()
+c.execute('SELECT id, initial_value, current_value, cash_balance, total_value, total_realized_pnl, total_won, total_lost, daily_pnl FROM portfolio WHERE id=1')
+r = c.fetchone()
+print('Portfolio(id=1):', r)
+c.execute('SELECT COUNT(*) FROM bets')
+b = c.fetchone()
+print('Total bets:', b[0])
+c.execute('SELECT COUNT(*) FROM analyses')
+a = c.fetchone()
+print('Total analyses:', a[0])
+conn.close()

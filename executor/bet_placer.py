@@ -38,7 +38,7 @@ class BetPlacer:
     def _init_polymarket_client(self):
         """Polymarket CLOB client hazirla (sadece DRY_RUN=false ise cagrilir)."""
         try:
-            from py_clob_client.client import ClobClient
+            from py_clob_client.client import ClobClient  # pylint: disable=import-error,no-name-in-module
             if not bot_config.polymarket.private_key:
                 self.ready = False
                 logger.info("Polymarket credentials not found, running in PAPER/SIMULATION trade mode.")
@@ -263,7 +263,7 @@ class BetPlacer:
             _live_allowed = (not Config.DRY_RUN) and os.getenv("LIVE_TRADING_ENABLED", "false").lower() == "true"
             if self.ready and _live_allowed:
                 try:
-                    from py_clob_client.order_builder.constants import BUY
+                    from py_clob_client.order_builder.constants import BUY  # pylint: disable=import-error,no-name-in-module
 
                     order = self.client.create_and_post_order({
                         "token_id": self._get_token_id(market, analysis.recommended_side),

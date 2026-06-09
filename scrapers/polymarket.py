@@ -415,10 +415,18 @@ class PolymarketScraper:
         if match:
             year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
             return datetime(year, month, day, 23, 59, 59)
-        # Pattern 3: "June 9" (yearless)
-        match = re.search(r"([A-Za-z]+)\s+(\d{1,2})", title)
+        # Pattern 3: "June 9" (yearless) — only valid month names to avoid
+        # false matches like "above 90" or "will 100"
+        _MONTH_NAMES = (
+            "January|February|March|April|May|June|July|"
+            "August|September|October|November|December|"
+            "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
+        )
+        match = re.search(
+            rf"(?:{_MONTH_NAMES})\s+(\d{{1,2}})", title, re.IGNORECASE
+        )
         if match:
-            month_str, day = match.group(1), int(match.group(2))
+            month_str, day = match.group(0).split()[0], int(match.group(1))
             today = datetime.now()
             for fmt in ("%B %d %Y", "%b %d %Y"):
                 try:

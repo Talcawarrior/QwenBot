@@ -146,7 +146,14 @@ async def get_status():
     db = get_db_session()
     try:
         portfolio = db.query(Portfolio).filter(Portfolio.id == 1).first()
-        daily_pnl = state.risk_manager.get_daily_pnl() if state.risk_manager else 0.0
+        # daily_pnl: sum realized PnL from bets settled today
+        from datetime import datetime, timezone
+        _today_start = datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
+        daily_pnl = (
+            db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
+            .filter(Bet.status.in_(("won", "lost")), Bet.settled_at >= _today_start)
+            .scalar()
+        ) or 0.0
 
         # Read live counts and exposure from DB so the dashboard doesn't
         # drift from reality. `placed` is the actual status used by
@@ -183,9 +190,10 @@ async def get_status():
             .filter(Bet.status.in_(open_statuses))
             .scalar()
         ) or 0.0
+        # Realized PnL: sum pnl from settled bets (won/lost), NOT open bets
         realized_pnl_db = (
             db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
-            .filter(Bet.status.in_(open_statuses))
+            .filter(Bet.status.in_(("won", "lost")))
             .scalar()
         ) or 0.0
 

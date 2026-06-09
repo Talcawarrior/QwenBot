@@ -182,6 +182,7 @@ def run_update_prices():
             else:
                 cash = (portfolio.initial_value or 1000.0) + float(realized_pnl_total)
             portfolio.total_value = round(cash + float(open_exposure), 2)
+            portfolio.current_value = portfolio.total_value  # Sync current_value
             portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
             session.add(portfolio)
 

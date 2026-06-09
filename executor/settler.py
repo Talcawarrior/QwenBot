@@ -65,6 +65,17 @@ class SettlementEngine:
 
             session.commit()
 
+        # Post-settlement portfolio sync: all bets are settled, so
+        # exposure=0, unrealized=0, total_value=cash_balance.
+        if markets_to_settle:
+            with get_session() as sync_session:
+                portfolio = sync_session.query(Portfolio).filter(Portfolio.id == 1).first()
+                if portfolio:
+                    portfolio.total_value = portfolio.cash_balance
+                    portfolio.current_value = portfolio.cash_balance
+                    portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
+                    sync_session.commit()
+
         logger.info(
             "Settlement complete: %s won, %s lost, %s pending, total_pnl=%.2f",
             won_count, lost_count, pending_count, total_pnl,
@@ -139,6 +150,7 @@ class SettlementEngine:
 
             bet.realized_pnl = round(realized_pnl, 2)
             bet.pnl = round(realized_pnl, 2)
+            bet.unrealized_pnl = 0.0  # Settled = no unrealized left
             total_market_pnl += realized_pnl
             any_settled = True
 

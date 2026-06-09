@@ -8,6 +8,7 @@ from sqlalchemy import func
 from database.db import get_session
 from database.models import Analysis, Bet, WeatherMarket, Portfolio
 from config.settings import bot_config, Config
+from utils.price_sanity import is_valid_binary_price
 
 logger = logging.getLogger("EXECUTOR_BET_PLACER")
 
@@ -71,6 +72,14 @@ class BetPlacer:
                 id=analysis.market_id
             ).first()
             if not market:
+                return None
+
+            # Price sanity check - skip invalid binary markets
+            if not is_valid_binary_price(market.yes_price or 0, market.no_price or 0):
+                logger.debug(
+                    f"Market {market.id}: invalid prices "
+                    f"yes={market.yes_price}, no={market.no_price}, skipping bet"
+                )
                 return None
 
             # Guard: skip resolved markets

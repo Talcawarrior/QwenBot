@@ -132,9 +132,19 @@ class Calculator:
                 return None
 
             # En son tahminleri al
+            # METRIC_MAP: WeatherEngine stores forecasts with Open-Meteo metric names
+            # (temperature_2m_max), but markets parsed by PolymarketScraper use short
+            # names (temperature_max). This map bridges the two naming conventions.
+            _metric_map = {
+                "temperature_max": "temperature_2m_max",
+                "temperature_min": "temperature_2m_min",
+                "temperature_2m_max": "temperature_2m_max",
+                "temperature_2m_min": "temperature_2m_min",
+            }
+            db_metric = _metric_map.get(market.metric, market.metric)
             forecasts = session.query(WeatherForecast).filter(
                 WeatherForecast.market_id == market_id,
-                WeatherForecast.metric == market.metric,
+                WeatherForecast.metric == db_metric,
             ).order_by(WeatherForecast.fetched_at.desc()).all()
 
             # Her kaynaktan en son tahmini al

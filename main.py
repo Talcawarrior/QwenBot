@@ -27,6 +27,7 @@ from engine.strategy import RiskManager, BettingEngine, SIALoop
 from engine.calculator import WeatherEngine
 from executor.settler import SettlementEngine
 from scrapers.polymarket import PolymarketScraper
+from utils.price_sanity import is_valid_binary_price, safe_ev
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -332,6 +333,17 @@ async def get_signals():
         db.close()
 
 
+# METRIC_MAP: WeatherEngine stores forecasts with Open-Meteo metric names
+# (temperature_2m_max), but markets parsed by PolymarketScraper use short
+# names (temperature_max). This map bridges the two naming conventions.
+_METRIC_MAP = {
+    "temperature_max": "temperature_2m_max",
+    "temperature_min": "temperature_2m_min",
+    "temperature_2m_max": "temperature_2m_max",
+    "temperature_2m_min": "temperature_2m_min",
+}
+
+
 @app.get("/api/markets")
 async def get_markets():
     """Get all future active weather markets (Global Market Watch) "” today + 2 days only."""
@@ -359,17 +371,21 @@ async def get_markets():
             # Skip markets missing essential data (no hardcoded fallbacks)
             if m.yes_price is None or m.threshold is None or not m.city:
                 continue
+            # Price sanity check
+            if not is_valid_binary_price(m.yes_price or 0, m.no_price or 0):
+                continue
             current_price = float(m.yes_price)
 
             # Real model probability from cached WeatherForecast rows (DB-side)
             model_prob = current_price
             try:
                 if m.metric in ("temperature_max", "temperature_min"):
+                    db_metric = _METRIC_MAP.get(m.metric, m.metric)
                     forecasts = (
                         db.query(WeatherForecast)
                         .filter(
                             WeatherForecast.market_id == m.id,
-                            WeatherForecast.metric == m.metric,
+                            WeatherForecast.metric == db_metric,
                         )
                         .order_by(WeatherForecast.fetched_at.desc())
                         .limit(8)
@@ -393,11 +409,7 @@ async def get_markets():
                 model_prob = current_price
 
             edge = model_prob - current_price
-            ev = (
-                (model_prob * (1 / current_price - 1)) - (1 - model_prob)
-                if current_price > 0
-                else 0.0
-            )
+            ev = safe_ev(model_prob, current_price)
 
             market_list.append(
                 {

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import aiohttp
 from config.settings import config, bot_config, Config
 from database.db import get_session
-from database.models import WeatherMarket, WeatherForecast, Analysis
+from database.models import WeatherMarket, WeatherForecast, Analysis, Portfolio
 from utils.price_sanity import is_valid_binary_price
 
 logger = logging.getLogger("ENGINE_CALCULATOR")
@@ -198,9 +198,11 @@ class Calculator:
                     kelly_frac = 0
                     recommended_side = None
 
-            # Bet miktarı
+            # Bet miktarı — gerçek portföyden oku
+            portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
+            bankroll = portfolio.total_value if portfolio and portfolio.total_value else 1000.0
             recommended_amount = min(
-                kelly_frac * 1000,  # Varsayılan bankroll $1000
+                kelly_frac * bankroll,
                 bot_config.strategy.max_bet_amount
             )
 

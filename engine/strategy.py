@@ -205,16 +205,34 @@ class BettingEngine:
         }
 
     def create_ladder_orders(self, signal: Dict, bet_size: float) -> List[Dict]:
-        """Create 3-level ladder orders if edge > 5%."""
+        """Create 3-level ladder orders. All start as PENDING."""
         edge = signal.get("edge", 0)
         if edge < 0.05:
             return []
 
         current_price = signal["market_price"]
         ladder = [
-            {"level": 1, "price": round(current_price * 0.98, 3), "size": bet_size * 0.5},
-            {"level": 2, "price": round(current_price * 0.95, 3), "size": bet_size * 0.3},
-            {"level": 3, "price": round(current_price * 0.92, 3), "size": bet_size * 0.2},
+            {
+                "level": 1,
+                "price": round(current_price, 4),  # Level 1 = market price
+                "size": round(bet_size * 0.5, 2),
+                "status": "pending",
+                "filled_at": None,
+            },
+            {
+                "level": 2,
+                "price": max(0.01, round(current_price * 0.98, 4)),
+                "size": round(bet_size * 0.3, 2),
+                "status": "pending",
+                "filled_at": None,
+            },
+            {
+                "level": 3,
+                "price": max(0.01, round(current_price * 0.95, 4)),
+                "size": round(bet_size * 0.2, 2),
+                "status": "pending",
+                "filled_at": None,
+            },
         ]
         return ladder
 
@@ -440,7 +458,7 @@ class SIALoop:
             settled_bets = (
                 db.query(Bet)
                 .filter(
-                    Bet.status.in_(["settled", "won", "lost"]),
+                    Bet.status.in_(["won", "lost"]),
                     Bet.settled_at >= cutoff,
                 )
                 .all()
@@ -451,9 +469,8 @@ class SIALoop:
                     predictions = []
                     outcomes = []
                     for bet in settled_bets:
-                        pred = getattr(bet, "expected_value", None)
-                        if pred is None or pred <= 0:
-                            pred = getattr(bet, "entry_price", 0.5)
+                        # Use fair_value (model probability 0-1), NOT expected_value (edge)
+                        pred = getattr(bet, "fair_value", None)
                         if pred is None or pred <= 0:
                             pred = 0.5
                         predictions.append(min(0.99, max(0.01, float(pred))))

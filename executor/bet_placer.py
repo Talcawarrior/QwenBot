@@ -307,13 +307,18 @@ class BetPlacer:
                     f"({shares:.2f} shares)"
                 )
 
-            # Deduct stake from portfolio cash balance so that portfolio
-            # accurately reflects available cash while bets are active.
+            # Deduct stake from portfolio cash balance.
+            # Only Level 1 (first order) is live stake; pending ladder
+            # levels are not yet deployed.
+            initial_stake = proposed_amount
+            if ladder_orders:
+                l1_amount = ladder_orders[0].get("amount") if isinstance(ladder_orders[0], dict) else None
+                if l1_amount and l1_amount > 0:
+                    initial_stake = l1_amount
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
             if portfolio:
-                portfolio.cash_balance -= proposed_amount
-                portfolio.current_value = portfolio.cash_balance
-                portfolio.total_value = portfolio.cash_balance
+                portfolio.cash_balance -= initial_stake
+                portfolio.current_value = portfolio.cash_balance  # unrealized PnL added later (Faz 4)
                 portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
             session.add(bet)
             session.commit()

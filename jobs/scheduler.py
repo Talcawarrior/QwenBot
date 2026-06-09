@@ -162,10 +162,8 @@ def run_update_prices():
             updated += 1
             session.add(bet)
 
-        # 3. Portfolio total_value = initial + realized_pnl + unrealized_pnl
-        # This formula is always correct even if cash_balance is corrupted
-        # by historical cancelled-bet deductions. (cancelled bets deducted
-        # stake from cash but were never settled/refunded.)
+        # 3. Portfolio: conservative current = cash + open_exposure
+        # Unrealized PnL is paper money — don't bake it into total_value.
         portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
         if portfolio:
             realized_pnl_total = (
@@ -173,10 +171,17 @@ def run_update_prices():
                 .filter(Bet.status.in_(("won", "lost")))
                 .scalar()
             ) or 0.0
-            portfolio.total_value = round(
-                (portfolio.initial_value or 1000.0) + float(realized_pnl_total) + total_unrealized,
-                2
-            )
+            open_exposure = (
+                session.query(func.coalesce(func.sum(Bet.amount), 0.0))
+                .filter(Bet.status.in_(("active", "open", "placed", "pending")))
+                .scalar()
+            ) or 0.0
+            # Conservative: cash + money locked in bets
+            if portfolio.cash_balance is not None:
+                cash = float(portfolio.cash_balance)
+            else:
+                cash = (portfolio.initial_value or 1000.0) + float(realized_pnl_total)
+            portfolio.total_value = round(cash + float(open_exposure), 2)
             portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
             session.add(portfolio)
 

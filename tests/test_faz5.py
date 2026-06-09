@@ -63,7 +63,7 @@ def _setup_market_and_forecasts():
                 market_id="test-faz5-nyc", city="New York",
                 lat=40.7128, lon=-74.0060,
                 target_date=datetime(2026, 6, 10, 23, 59, 59),
-                metric="temperature_2m_max", source=source,
+                metric="temperature_max", source=source,
                 predicted_value=temp, fetched_at=datetime.now(),
             )
             session.add(wf)

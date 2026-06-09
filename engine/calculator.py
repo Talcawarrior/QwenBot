@@ -131,22 +131,10 @@ class Calculator:
                 logger.debug(f"Market {market_id}: price {market_price:.4f} < min {min_price}, skipping")
                 return None
 
-            # En son tahminleri al
-            # METRIC_MAP: WeatherEngine stores forecasts with Open-Meteo metric names
-            # (temperature_2m_max), but markets parsed by PolymarketScraper use short
-            # names (temperature_max). This map bridges the two naming conventions.
-            _metric_map = {
-                "temperature_max": "temperature_2m_max",
-                "temperature_min": "temperature_2m_min",
-                "temperature_2m_max": "temperature_2m_max",
-                "temperature_2m_min": "temperature_2m_min",
-            }
-            db_metric = _metric_map.get(market.metric, market.metric)
-            # Query for BOTH original (temperature_max) and Open-Meteo (temperature_2m_max)
-            # metric names to handle forecasts stored under either convention.
+            # En son tahminleri al — query by market.metric directly.
             forecasts = session.query(WeatherForecast).filter(
                 WeatherForecast.market_id == market_id,
-                WeatherForecast.metric.in_([db_metric, market.metric]),
+                WeatherForecast.metric == market.metric,
             ).order_by(WeatherForecast.fetched_at.desc()).all()
 
             # Her kaynaktan en son tahmini al
@@ -406,6 +394,7 @@ class WeatherEngine:
         target_date: Optional[datetime] = None,
         market_id: str = "",
         db_session=None,
+        metric: str = "temperature_2m_max",
     ) -> Optional[Dict]:
         if not city_code or (latitude == 0 and longitude == 0):
             return None
@@ -475,7 +464,7 @@ class WeatherEngine:
                 if db_session is not None and market_id:
                     from database.models import WeatherForecast
                     for mn, tmp in model_temps.items():
-                        db_session.add(WeatherForecast(market_id=market_id, city=city_code, lat=latitude, lon=longitude, target_date=target_date, metric="temperature_2m_max", source=mn, predicted_value=float(tmp), model_weight=self.model_weights.get(mn, 0.0), fetched_at=datetime.now(timezone.utc).replace(tzinfo=None), raw_data=str({"model": mn, "temp": tmp, "ensemble": True})))
+                        db_session.add(WeatherForecast(market_id=market_id, city=city_code, lat=latitude, lon=longitude, target_date=target_date, metric=metric, source=mn, predicted_value=float(tmp), model_weight=self.model_weights.get(mn, 0.0), fetched_at=datetime.now(timezone.utc).replace(tzinfo=None), raw_data=str({"model": mn, "temp": tmp, "ensemble": True})))
                     try:
                         db_session.commit()
                     except Exception:

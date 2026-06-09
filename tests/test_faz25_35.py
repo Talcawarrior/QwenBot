@@ -46,7 +46,7 @@ def _add_forecast(market_id, source, value):
         s.add(WeatherForecast(
             market_id=market_id, city="New York", lat=40.7128, lon=-74.0060,
             target_date=datetime.now() + timedelta(days=1),
-            metric="temperature_2m_max", source=source, predicted_value=value,
+            metric="temperature_max", source=source, predicted_value=value,
             fetched_at=datetime.now(),
         ))
         s.commit()

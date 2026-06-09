@@ -290,16 +290,16 @@ class MeteoFetcher:
 
         we = WeatherEngine(db_session_factory=get_session)
 
-        for mid, city, city_code, target_date, metric, lat, lon in markets_data:
-            try:
-                if lat == 0.0 and lon == 0.0:
-                    count = self.fetch_for_market(mid, city, target_date, metric)
-                    total += count
-                    continue
-
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            for mid, city, city_code, target_date, metric, lat, lon in markets_data:
                 try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
+                    if lat == 0.0 and lon == 0.0:
+                        count = self.fetch_for_market(mid, city, target_date, metric)
+                        total += count
+                        continue
+
                     try:
                         result = loop.run_until_complete(
                             we.get_multi_model_forecast(
@@ -309,27 +309,28 @@ class MeteoFetcher:
                                 target_date=target_date,
                                 market_id=mid,
                                 db_session=session,
+                                metric=metric,
                             )
                         )
-                    finally:
-                        loop.close()
 
-                    if result and result.get("model_count", 0) >= 3:
-                        total += result["model_count"]
-                        logger.info(
-                            "Ensemble OK: %s (%s models)", mid, result["model_count"]
-                        )
-                        continue
+                        if result and result.get("model_count", 0) >= 3:
+                            total += result["model_count"]
+                            logger.info(
+                                "Ensemble OK: %s (%s models)", mid, result["model_count"]
+                            )
+                            continue
+                    except Exception as e:
+                        logger.debug("Ensemble failed for %s: %s", mid, e)
+
+                    count = self.fetch_for_market(mid, city, target_date, metric)
+                    total += count
+                    logger.info("Backup fetch: %s (%s sources)", mid, count)
+
                 except Exception as e:
-                    logger.debug("Ensemble failed for %s: %s", mid, e)
-
-                count = self.fetch_for_market(mid, city, target_date, metric)
-                total += count
-                logger.info("Backup fetch: %s (%s sources)", mid, count)
-
-            except Exception as e:
-                logger.error("Market %s forecast error: %s", mid, e)
-                continue
+                    logger.error("Market %s forecast error: %s", mid, e)
+                    continue
+        finally:
+            loop.close()
 
         return total
 

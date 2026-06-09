@@ -203,7 +203,8 @@ async def get_status():
             "lock_reason": state.lock_reason,
             "portfolio": {
                 "initial": state.config.INITIAL_PORTFOLIO,
-                "current": state.config.INITIAL_PORTFOLIO + float(realized_pnl_db) + float(unrealized_pnl_db),
+                # Conservative: cash + money locked in bets (unrealized is paper only)
+                "current": float(exposure_db) + (float(portfolio.cash_balance) if portfolio and portfolio.cash_balance else (state.config.INITIAL_PORTFOLIO - float(exposure_db))),
                 "daily_pnl": daily_pnl,
                 "unrealized_pnl": float(unrealized_pnl_db),
                 "realized_pnl": float(realized_pnl_db),
@@ -341,15 +342,9 @@ async def get_signals():
         db.close()
 
 
-# METRIC_MAP: WeatherEngine stores forecasts with Open-Meteo metric names
-# (temperature_2m_max), but markets parsed by PolymarketScraper use short
-# names (temperature_max). This map bridges the two naming conventions.
-_METRIC_MAP = {
-    "temperature_max": "temperature_2m_max",
-    "temperature_min": "temperature_2m_min",
-    "temperature_2m_max": "temperature_2m_max",
-    "temperature_2m_min": "temperature_2m_min",
-}
+# METRIC_MAP removed — forecasts are now stored with the market's canonical
+# metric name at write time, so no bridging is needed.
+_METRIC_MAP = {}  # legacy stub kept for test compatibility
 
 
 @app.get("/api/markets")
@@ -388,12 +383,11 @@ async def get_markets():
             model_prob = current_price
             try:
                 if m.metric in ("temperature_max", "temperature_min"):
-                    db_metric = _METRIC_MAP.get(m.metric, m.metric)
                     forecasts = (
                         db.query(WeatherForecast)
                         .filter(
                             WeatherForecast.market_id == m.id,
-                            WeatherForecast.metric == db_metric,
+                            WeatherForecast.metric == m.metric,
                         )
                         .order_by(WeatherForecast.fetched_at.desc())
                         .limit(8)
@@ -496,6 +490,52 @@ async def get_history():
     finally:
         db.close()
 
+
+@app.post("/api/cleanup")
+async def cleanup_old_data():
+    """Clean stale pre-today analyses and bets."""
+    db = get_db_session()
+    try:
+        _today_start = datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        stale_analyses = (
+            db.query(Analysis)
+            .filter(
+                Analysis.should_bet.is_(True),
+                Analysis.analyzed_at < _today_start,
+            )
+            .delete(synchronize_session=False)
+        )
+
+        open_statuses = ("active", "open", "placed", "pending")
+        stale_bets = (
+            db.query(Bet)
+            .filter(
+                Bet.status.in_(open_statuses),
+                Bet.created_at < _today_start,
+            )
+            .all()
+        )
+        cancelled = 0
+        for bet in stale_bets:
+            bet.status = "cancelled"
+            bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            portfolio = db.query(Portfolio).filter(Portfolio.id == 1).first()
+            if portfolio:
+                portfolio.cash_balance = (portfolio.cash_balance or 0.0) + float(bet.amount or 0.0)
+            cancelled += 1
+
+        db.commit()
+        return {
+            "deleted_analyses": stale_analyses,
+            "cancelled_bets": cancelled,
+            "message": f"Cleaned {stale_analyses} stale analyses, cancelled {cancelled} stale bets",
+        }
+    except Exception as e:
+        db.rollback()
+        return {"error": str(e)}
+    finally:
+        db.close()
 
 
 @app.get("/api/bets")

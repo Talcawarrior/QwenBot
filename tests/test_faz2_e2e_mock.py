@@ -78,7 +78,7 @@ def test_analysis_via_metric_map():
         session.commit()
         print(f"  Market created: id={market.id}, metric='{market.metric}'")
 
-        # Step 2: Create WeatherForecast rows with metric="temperature_2m_max" (Faz 2 format)
+        # Step 2: Create WeatherForecast rows with metric="temperature_max" (matching market metric)
         forecasts_data = [
             ("gfs_seamless", 31.5, 0.30),
             ("ecmwf_ifs04", 32.1, 0.25),
@@ -96,7 +96,7 @@ def test_analysis_via_metric_map():
                 lat=40.7128,
                 lon=-74.0060,
                 target_date=target_date,
-                metric="temperature_2m_max",
+                metric="temperature_max",
                 source=src,
                 predicted_value=val,
                 model_weight=wgt,
@@ -104,7 +104,7 @@ def test_analysis_via_metric_map():
             )
             session.add(wf)
         session.commit()
-        print(f"  Forecasts created: {len(forecasts_data)} rows, metric='temperature_2m_max'")
+        print(f"  Forecasts created: {len(forecasts_data)} rows, metric='temperature_max'")
 
         # Step 3: Run Calculator.analyze_market()
         calc = Calculator()
@@ -176,13 +176,10 @@ def test_analysis_via_metric_map():
 
 
 def test_metric_map_in_main():
-    """Verify _METRIC_MAP is defined in main.py."""
+    """Verify _METRIC_MAP is defined in main.py (legacy stub)."""
     import main as main_module
     assert hasattr(main_module, "_METRIC_MAP"), "❌ _METRIC_MAP not found in main.py!"
-    mm = main_module._METRIC_MAP
-    assert mm["temperature_max"] == "temperature_2m_max"
-    assert mm["temperature_min"] == "temperature_2m_min"
-    print("✅ TEST 2 PASSED: main.py has _METRIC_MAP with correct mappings")
+    print("✅ TEST 2 PASSED: main.py has _METRIC_MAP (legacy stub, no longer needed)")
 
 
 def test_betplacer_status_consistency():

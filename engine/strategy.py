@@ -58,9 +58,24 @@ class RiskManager:
         self.config = cfg or config
         self.portfolio_value = getattr(self.config, "INITIAL_PORTFOLIO", 1000.0)
         self.daily_pnl = 0.0
+        # Load current portfolio value from DB so exposure cap uses
+        # the actual portfolio, not just INITIAL_PORTFOLIO.
+        self._load_portfolio_from_db()
         self.open_bets_count = 0
         self.city_bet_counts: Dict[str, int] = {}
         self._load_from_db()
+
+    def _load_portfolio_from_db(self):
+        """Load current portfolio total_value from DB."""
+        if not self.db:
+            return
+        try:
+            from database.models import Portfolio
+            p = self.db.query(Portfolio).filter(Portfolio.id == 1).first()
+            if p and p.total_value:
+                self.portfolio_value = float(p.total_value)
+        except Exception:
+            pass
 
     def update_portfolio(self, value: float):
         """Update portfolio value."""

@@ -55,8 +55,8 @@ class StrategyConfig:
     # consensus. 1% is enough to cover bookmaker vig + a thin profit
     # margin in paper mode. Can be raised back once a private weather
     # feed (e.g. ECMWF-direct) gives a structural edge.
-    min_edge: float = 0.01
-    max_bet_amount: float = 50.0    # Maximum $50 per bet
+    min_edge: float = 0.05           # 5% edge minimum (must exceed 2% fee_drag + margin)
+    max_bet_amount: float = 30.0    # Maximum $50 per bet
     min_liquidity: float = 0.0      # Liquidity check disabled: Polymarket public-search
                                     # markets don't expose a `liquidity` field reliably
                                     # (it's always 0). The current_price already reflects
@@ -80,7 +80,7 @@ class StrategyConfig:
     # ramps to edge_escalation_multiplier * min_edge at 0h.
     edge_escalation_hours: int = 24
     edge_escalation_multiplier: float = 2.0
-    min_sources: int = 1            # En az 1 hava kaynağı (aligned for Open-Meteo free tier)
+    min_sources: int = 3            # En az 3 model ensemble (GFS, ECMWF, GEM minimum)            # En az 1 hava kaynağı (aligned for Open-Meteo free tier)
     fee_drag: float = 0.02          # Polymarket taker fee %2
     # Bot scope: today + 1 + 2 days ahead (0..2 inclusive).
     # Tightened from 14 to 2 so the bot only trades near-term markets

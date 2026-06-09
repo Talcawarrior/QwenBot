@@ -102,17 +102,15 @@ def test_flat_bet_usd_default_is_disabled():
 
 
 def test_strategy_min_edge_is_lowered_to_one_percent():
-    """The minimum edge threshold was lowered from 3% to 1%.
+    """The minimum edge threshold is set to 5%.
 
-    Polymarket /public-search temperature markets rarely produce 3%+
-    edge because the public weather consensus is already discounted
-    into the price. With 1% threshold the bot triggers bets on the
-    realistic 1-2.5% edges we observe in production logs.
+    After dogfooding, we raised min_edge from 1% to 5% to reduce
+    noise: only markets with >=5% edge after 2% fee drag are eligible.
     """
     from config.settings import StrategyConfig
-    assert float(StrategyConfig().min_edge) <= 0.02, (
-        f"StrategyConfig.min_edge should be <= 2% to trigger on real "
-        f"Polymarket data, got {StrategyConfig().min_edge}"
+    me = float(StrategyConfig().min_edge)
+    assert 0.01 <= me <= 0.10, (
+        f"StrategyConfig.min_edge should be between 1%-10%, got {me}"
     )
 
 

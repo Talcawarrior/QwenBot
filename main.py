@@ -1,4 +1,4 @@
-﻿"""
+"""
 MAIN SERVER - FastAPI + WebSocket + Command Line Interface (CLI)
 - Fully decoupled, modular and robust
 - Handles CLI tasks (e.g. python main.py fetch) for pinpoint, isolated executions
@@ -69,7 +69,7 @@ class BotState:
         self.betting_engine = BettingEngine(
             None, self.risk_manager, self.weather_engine
         )
-        self.settlement_engine = SettlementEngine(None, self.config)
+        self.settlement_engine = SettlementEngine()
         self.sia_loop = SIALoop(self.db_session_factory, self.config)
 
 

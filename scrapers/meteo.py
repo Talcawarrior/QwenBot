@@ -277,6 +277,8 @@ class MeteoFetcher:
                     WeatherMarket.city.isnot(None),
                     WeatherMarket.target_date.isnot(None),
                     WeatherMarket.metric.isnot(None),
+                    WeatherMarket.latitude != 0,
+                    WeatherMarket.longitude != 0,
                 )
                 .all()
             )

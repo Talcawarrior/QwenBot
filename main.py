@@ -512,7 +512,7 @@ async def cleanup_old_data():
             db.query(Bet)
             .filter(
                 Bet.status.in_(open_statuses),
-                Bet.created_at < _today_start,
+                Bet.placed_at < _today_start,
             )
             .all()
         )

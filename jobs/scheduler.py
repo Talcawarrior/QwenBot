@@ -1,9 +1,11 @@
 """Independent scheduled job executors."""
 
+import json
 import logging
 from datetime import datetime, timezone
+from sqlalchemy import func
 from database.db import get_session
-from database.models import Bet, WeatherMarket
+from database.models import Bet, WeatherMarket, Portfolio
 
 logger = logging.getLogger("JOBS_SCHEDULER")
 
@@ -66,21 +68,17 @@ def run_place_bets():
 
 
 def run_update_prices():
-    """Refresh `current_price` (and `unrealized_pnl`) on every open bet.
-
-    The Bet row is created with `current_price = entry_price` (no
-    market movement yet). The settler updates current_price only at
-    settlement time, which means PnL stays at 0 for the entire
-    active position lifetime — misleading on the dashboard and
-    impossible to use for risk management. Run this on every scan
-    cycle so the dashboard reflects live price movement.
+    """
+    Refresh `current_price`, fill ladder orders, and update `unrealized_pnl`
+    on every open bet. Updates Portfolio.total_value at the end.
 
     Algorithm:
-        For every Bet in an open status, look up the latest YES
-        price of the underlying market, set Bet.current_price to it,
-        and recompute unrealized_pnl = (current - entry) * shares.
-        Uses the market_id and the side (YES/NO) to pick the right
-        price: YES -> yes_price, NO -> 1 - yes_price.
+        1. Query every Bet in an open status.
+        2. For each bet, look up the latest market price (WeatherMarket.yes_price).
+        3. Update Bet.current_price, recompute unrealized_pnl.
+        4. Check ladder_data: if any pending rung's trigger price is reached,
+           mark it "filled" and debit the rung amount from portfolio cash.
+        5. Update Portfolio.total_value = cash + open_exposure + unrealized_pnl.
     """
     open_statuses = ("active", "open", "placed", "pending")
     updated = 0
@@ -90,26 +88,97 @@ def run_update_prices():
             .filter(Bet.status.in_(open_statuses))
             .all()
         )
+
+        # Pre-fetch price map: market_id -> prices
+        market_ids = list(set(b.market_id for b in bets if b.market_id))
+        price_map = {}
+        if market_ids:
+            markets = session.query(WeatherMarket).filter(
+                WeatherMarket.id.in_(market_ids)
+            ).all()
+            for m in markets:
+                price_map[m.id] = {
+                    "yes": float(m.yes_price) if m.yes_price is not None else 0.5,
+                    "no": float(m.no_price) if m.no_price is not None else 0.5,
+                }
+
+        total_unrealized = 0.0
+
         for bet in bets:
-            market = session.query(WeatherMarket).filter(
-                WeatherMarket.id == bet.market_id
-            ).first()
-            if not market or market.yes_price is None:
+            if bet.market_id not in price_map:
                 continue
-            yes_price = float(market.yes_price)
+
+            prices = price_map[bet.market_id]
+
+            # current_price from market
             if bet.side and bet.side.upper() == "NO":
-                current = max(0.0, min(1.0, 1.0 - yes_price))
+                current = max(0.0, min(1.0, 1.0 - prices["yes"]))
             else:
-                current = max(0.0, min(1.0, yes_price))
+                current = max(0.0, min(1.0, prices["yes"]))
+
             entry = float(bet.entry_price or bet.price or 0.0)
             shares = float(bet.shares or 0.0)
+
             bet.current_price = current
-            bet.unrealized_pnl = (current - entry) * shares
-            # bet.pnl is "realized" — leave it alone. The dashboard
-            # shows unrealized_pnl, so the live number is what changes.
+
+            # 1. unrealized_pnl
+            # current_price is already in side terms (YES=yes_price, NO=no_price)
+            # so the same (current - entry) * shares formula works for both sides.
+            bet.unrealized_pnl = round(shares * (current - entry), 2)
+
+            total_unrealized += (bet.unrealized_pnl or 0.0)
+
+            # 2. Ladder fill check
+            if bet.ladder_data:
+                try:
+                    ladder = json.loads(bet.ladder_data) if isinstance(bet.ladder_data, str) else bet.ladder_data
+                    if isinstance(ladder, list):
+                        filled_amount = 0.0
+                        for rung in ladder:
+                            if rung.get("status") == "pending":
+                                trigger_price = float(rung.get("price", 0))
+                                rung_size = float(rung.get("size", rung.get("amount", 0)))
+                                if bet.side and bet.side.upper() == "NO":
+                                    # NO side: bet price rises as yes_price falls
+                                    should_fill = (1.0 - current) <= (1.0 - trigger_price)
+                                else:
+                                    should_fill = current <= trigger_price
+                                if should_fill and rung_size > 0:
+                                    rung["status"] = "filled"
+                                    rung["filled_at"] = datetime.now(timezone.utc).isoformat()
+                                    filled_amount += rung_size
+                        if filled_amount > 0:
+                            bet.ladder_data = json.dumps(ladder)
+                            portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
+                            if portfolio:
+                                portfolio.cash_balance = (portfolio.cash_balance or 0.0) - filled_amount
+                                logger.info(
+                                    "Ladder filled: %s, level amount=%.2f, new cash=%.2f",
+                                    bet.market_id, filled_amount, portfolio.cash_balance
+                                )
+                except Exception as e:
+                    logger.warning("Ladder parse hatası %s: %s", bet.id, e)
+
             updated += 1
+            session.add(bet)
+
+        # 3. Portfolio total_value = cash + open_exposure + unrealized_pnl
+        portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
+        if portfolio:
+            open_exposure = (
+                session.query(func.coalesce(func.sum(Bet.amount), 0.0))
+                .filter(Bet.status.in_(open_statuses))
+                .scalar()
+            ) or 0.0
+            portfolio.total_value = round(
+                (portfolio.cash_balance or 0.0) + float(open_exposure) + total_unrealized,
+                2
+            )
+            portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
+            session.add(portfolio)
+
         session.commit()
-    return f"{updated} açık bet'in current_price/unrealized_pnl güncellendi"
+    return f"{updated} açık bet güncellendi, total_unrealized={total_unrealized:.2f}"
 
 
 def run_settle():
@@ -130,7 +199,6 @@ def run_report():
             WeatherMarket.status == "open"
         ).count()
 
-        from sqlalchemy import func
         total_pnl = session.query(func.sum(Bet.pnl)).scalar() or 0.0
 
         report = (

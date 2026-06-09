@@ -263,7 +263,7 @@ class BetPlacer:
                         "price": lvl_price,
                         "amount": lvl_amount,
                         "shares": lvl_shares,
-                        "status": "paper_filled",
+                        "status": "pending",
                     })
             bet.ladder_data = json.dumps(ladder_orders) if ladder_orders else "[]"
 

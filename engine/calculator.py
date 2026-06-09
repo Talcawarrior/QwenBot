@@ -142,9 +142,11 @@ class Calculator:
                 "temperature_2m_min": "temperature_2m_min",
             }
             db_metric = _metric_map.get(market.metric, market.metric)
+            # Query for BOTH original (temperature_max) and Open-Meteo (temperature_2m_max)
+            # metric names to handle forecasts stored under either convention.
             forecasts = session.query(WeatherForecast).filter(
                 WeatherForecast.market_id == market_id,
-                WeatherForecast.metric == db_metric,
+                WeatherForecast.metric.in_([db_metric, market.metric]),
             ).order_by(WeatherForecast.fetched_at.desc()).all()
 
             # Her kaynaktan en son tahmini al

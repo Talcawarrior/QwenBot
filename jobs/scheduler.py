@@ -183,9 +183,9 @@ def run_update_prices():
 
 def run_settle():
     """Settle resolved bets against actual weather data."""
-    from executor.settler import Settler
-    settler = Settler()
-    results = settler.settle_all()
+    from executor.settler import SettlementEngine
+    engine = SettlementEngine()
+    results = engine.settle_all()
     return f"Sonuçlandırılan -> Kazanan:{results['win']}, Kaybeden:{results['loss']}, Bekleyen:{results['pending']}"
 
 

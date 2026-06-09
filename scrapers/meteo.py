@@ -59,7 +59,7 @@ def _cache_clear() -> None:
 # Per-host request throttle to keep us under Open-Meteo's free-tier burst
 # limits. Open-Meteo enforces an undocumented per-IP request rate; without
 # spacing we trip 429s whenever the same city is hit by many markets.
-_MIN_INTERVAL_S = 0.25  # 250 ms between calls to the same host
+_MIN_INTERVAL_S = 1.0  # 1s between calls — Open-Meteo free tier bursts at ~1 req/s
 _LAST_CALL_AT: dict[str, float] = {}
 _THROTTLE_LOCK = threading.Lock()
 

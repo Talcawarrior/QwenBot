@@ -310,7 +310,7 @@ class Calculator:
 
 # WeatherEngine kept for seamless FastAPI / backward compatibility
 OPEN_METEO_MODEL_MAP = {
-    "gfs_seamless": "gfs025",
+    "gfs_seamless": "gfs_seamless",
     "ecmwf_ifs04": "ecmwf_ifs025",
     "gem_seamless": "gem_global",
     "icon_seamless": "icon_global",

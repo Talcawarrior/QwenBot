@@ -146,13 +146,9 @@ class BetPlacer:
                 )
                 proposed_amount = max_bet
 
-            # Cap 2: total exposure cap (TOTAL_EXPOSURE_PCT * portfolio).
-            # We compute current exposure from the DB (the only source of
-            # truth) and reject the bet if adding it would breach the cap.
-            # Refresh portfolio value from DB so exposure cap uses current value
-            portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
-            if portfolio and portfolio.total_value:
-                self.risk_manager.portfolio_value = float(portfolio.total_value)
+            # Cap 2: total exposure cap (TOTAL_EXPOSURE_PCT * conservative portfolio).
+            # check_exposure_cap now dynamically computes conservative value
+            # (cash + open_exposure) from DB, so no stale portfolio_value.
             current_exposure = (
                 session.query(func.coalesce(func.sum(Bet.amount), 0.0))
                 .filter(Bet.status.in_(self._OPEN_STATUSES))

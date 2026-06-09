@@ -121,9 +121,43 @@ class RiskManager:
         )
 
     def check_exposure_cap(self, current_exposure: float, additional_bet: float) -> bool:
-        """Check total exposure cap limit."""
-        max_exposure = self.portfolio_value * self.config.TOTAL_EXPOSURE_PCT
-        return (current_exposure + additional_bet) <= max_exposure
+        """Check total exposure cap limit.
+
+        Uses CONSERVATIVE portfolio value: cash + open_exposure.
+        This ensures the cap scales with actual money the bot controls,
+        not inflated by unrealized paper gains.
+        """
+        conservative_value = self._conservative_portfolio_value()
+        max_exposure = conservative_value * self.config.TOTAL_EXPOSURE_PCT
+        if (current_exposure + additional_bet) > max_exposure:
+            logger.warning(
+                "Exposure cap: $%.2f + $%.2f = $%.2f > $%.2f (25%% of $%.2f conservative)",
+                current_exposure, additional_bet,
+                current_exposure + additional_bet,
+                max_exposure, conservative_value,
+            )
+            return False
+        return True
+
+    def _conservative_portfolio_value(self) -> float:
+        """Compute conservative portfolio value: cash + open_exposure."""
+        if not self.db:
+            return self.portfolio_value
+        try:
+            from database.models import Portfolio, Bet
+            from sqlalchemy import func
+            pf = self.db.query(Portfolio).filter(Portfolio.id == 1).first()
+            if not pf:
+                return self.portfolio_value
+            cash = float(pf.cash_balance or 0)
+            exposure = float(
+                self.db.query(func.coalesce(func.sum(Bet.amount), 0.0))
+                .filter(Bet.status.in_(["active", "open", "placed", "pending"]))
+                .scalar() or 0.0
+            )
+            return cash + exposure
+        except Exception:
+            return self.portfolio_value
 
     def is_bot_locked(self) -> bool:
         """Check if bot is locked."""

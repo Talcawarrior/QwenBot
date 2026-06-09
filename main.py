@@ -203,7 +203,7 @@ async def get_status():
             "lock_reason": state.lock_reason,
             "portfolio": {
                 "initial": state.config.INITIAL_PORTFOLIO,
-                "current": portfolio.total_value if portfolio else state.config.INITIAL_PORTFOLIO,
+                "current": state.config.INITIAL_PORTFOLIO + float(realized_pnl_db) + float(unrealized_pnl_db),
                 "daily_pnl": daily_pnl,
                 "unrealized_pnl": float(unrealized_pnl_db),
                 "realized_pnl": float(realized_pnl_db),

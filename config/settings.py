@@ -118,7 +118,7 @@ class Config:
     # 0.0 (default) means 'use the calculator's Kelly-based recommendation'.
     # > 0.0 means 'every bet is exactly this many USD, ignore Kelly sizing'.
     # Risk caps (MAX_BET_PCT, TOTAL_EXPOSURE_PCT, CITY_CAP) still apply on top.
-    FLAT_BET_USD = float(os.getenv("FLAT_BET_USD", "10.0"))  # 0 = use Kelly sizing
+    FLAT_BET_USD = float(os.getenv("FLAT_BET_USD", "0.0"))  # 0 = use Kelly sizing
     KELLY_FRACTION = float(os.getenv("KELLY_FRACTION", "0.15"))
     DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", "0.05"))
     CITY_CAP = int(os.getenv("CITY_CAP", "4"))

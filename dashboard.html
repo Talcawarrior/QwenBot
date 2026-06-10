@@ -96,20 +96,20 @@
                 <div class="card-value" id="portfolioValue">$1,000.00</div>
             </div>
             <div class="card">
-                <div class="card-title">Realized PnL (USD)</div>
-                <div class="card-value" id="realizedPnl">$0.00</div>
+                <div class="card-title">Açık Bahis Sayısı</div>
+                <div class="card-value" id="openBetsCount" style="color: #667eea;">0</div>
             </div>
             <div class="card">
-                <div class="card-title">Unrealized PnL (USD)</div>
+                <div class="card-title">Açık PnL (Unrealized)</div>
                 <div class="card-value" id="unrealizedPnl">$0.00</div>
             </div>
             <div class="card">
-                <div class="card-title">Toplam PnL (USD)</div>
-                <div class="card-value" id="totalPnl">$0.00</div>
+                <div class="card-title">Kapalı PnL (Realized)</div>
+                <div class="card-value" id="realizedPnl">$0.00</div>
             </div>
             <div class="card">
-                <div class="card-title">Günlük ROI</div>
-                <div class="card-value" id="dailyRoi">%0.00</div>
+                <div class="card-title">Toplam PnL (Net)</div>
+                <div class="card-value" id="totalPnl">$0.00</div>
             </div>
             <div class="card">
                 <div class="card-title">Toplam ROI</div>
@@ -120,7 +120,7 @@
                 <div class="card-value" id="winLossRatio" style="font-size: 18px;">0 / 0</div>
             </div>
             <div class="card">
-                <div class="card-title">Açık Pozisyon</div>
+                <div class="card-title">Kullanılan Teminat</div>
                 <div class="card-value" id="exposure">$0.00</div>
             </div>
         </div>
@@ -341,6 +341,7 @@
                 }
                 
                 document.getElementById('portfolioValue').textContent = `$${data.portfolio.current.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                document.getElementById('openBetsCount').textContent = data.stats.total_bets;
                 
                 const realizedPnlEl = document.getElementById('realizedPnl');
                 realizedPnlEl.textContent = `$${data.portfolio.realized_pnl.toFixed(2)}`;

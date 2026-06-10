@@ -411,19 +411,52 @@ async def stop_bot():
 
 @app.post("/api/reset")
 async def reset_bot():
+    """Reset the bot state and clear in-flight DB rows WITHOUT auto-restart."""
     await stop_bot()
     db = get_db_session()
     try:
-        db.query(Bet).filter(Bet.status.in_(("active", "open", "placed", "pending"))).update({"status": "cancelled"})
+        # Clear all operational data
+        db.query(Bet).delete()
         db.query(Analysis).delete()
+        
+        # Reset portfolio to exactly 1000
         pf = db.query(Portfolio).filter(Portfolio.id == 1).first()
-        if pf:
-            pf.cash_balance = pf.initial_value = pf.current_value = pf.total_value = state.config.INITIAL_PORTFOLIO
-            pf.total_realized_pnl = pf.daily_pnl = 0.0; pf.total_won = pf.total_lost = 0
+        if not pf:
+            pf = Portfolio(id=1)
+            db.add(pf)
+        
+        pf.cash_balance = 1000.0
+        pf.initial_value = 1000.0
+        pf.current_value = 1000.0
+        pf.total_value = 1000.0
+        pf.total_realized_pnl = 0.0
+        pf.daily_pnl = 0.0
+        pf.total_won = 0
+        pf.total_lost = 0
+        
         db.commit()
-        await start_bot()
-        return {"status": "reset"}
-    finally: db.close()
+        
+        # Reset in-memory state
+        state.total_signals = 0
+        state.total_bets = 0
+        state.last_scan = None
+        
+        return {
+            "status": "reset",
+            "message": "Sistem sifirlandi. Lutfen manuel olarak baslatin.",
+            "portfolio": {
+                "current": 1000.0,
+                "exposure": 0.0,
+                "realized_pnl": 0.0,
+                "unrealized_pnl": 0.0
+            }
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Reset error: {e}")
+        return {"error": str(e)}
+    finally:
+        db.close()
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

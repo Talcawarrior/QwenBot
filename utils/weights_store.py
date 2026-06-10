@@ -1,4 +1,4 @@
-﻿"""JSON weight persistence for SIA.
+"""JSON weight persistence for SIA.
 
 The SIA loop optimizes MODEL_WEIGHTS in memory and on ModelPerformance rows,
 but the live config object is process-local. Without a durable copy, every
@@ -30,13 +30,36 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# Project root: two parents up from utils/ -> repo root. The file lives at
-# data/model_weights.json so it sits next to data/bot.db.
-_DEFAULT_PATH = os.path.abspath(
+# Project root: two parents up from utils/ -> repo root.
+_WEIGHTS_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), os.pardir, "data", "model_weights.json")
+)
+_STRATEGY_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.pardir, "data", "strategy_params.json")
 )
 
 _lock = threading.Lock()
+
+
+def load_strategy_params() -> Optional[Dict[str, float]]:
+    """Read strategy parameters from disk."""
+    try:
+        with open(_STRATEGY_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return None
+
+
+def save_strategy_params(params: Dict[str, float]):
+    """Save strategy parameters to disk."""
+    with _lock:
+        try:
+            os.makedirs(os.path.dirname(_STRATEGY_PATH), exist_ok=True)
+            with open(_STRATEGY_PATH, "w", encoding="utf-8") as f:
+                json.dump(params, f, indent=2)
+            logger.info("Strategy parameters persisted to %s", _STRATEGY_PATH)
+        except Exception as e:
+            logger.warning("Could not save strategy parameters: %s", e)
 
 
 def _normalize(weights: Dict[str, float]) -> Dict[str, float]:
@@ -62,7 +85,7 @@ def load_weights(path: Optional[str] = None) -> Optional[Dict[str, float]]:
     unparseable, or the data directory is unreadable. Callers should
     fall back to the in-memory defaults on None.
     """
-    p = path or _DEFAULT_PATH
+    p = path or _WEIGHTS_PATH
     try:
         with open(p, "r", encoding="utf-8") as f:
             raw = json.load(f)
@@ -89,7 +112,7 @@ def save_weights(
     or the write failed (in which case a warning is logged but no
     exception is raised -- the in-memory update still took effect).
     """
-    p = path or _DEFAULT_PATH
+    p = path or _WEIGHTS_PATH
     norm = _normalize(weights)
     if not norm:
         return False

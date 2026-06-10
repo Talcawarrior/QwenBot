@@ -1,4 +1,4 @@
-﻿"""Sinyal analizi, Kelly kasa yönetimi, risk kontrolü ve SIA kendi kendini geliştiren algoritma (Self-Improving Algorithm)."""
+"""Sinyal analizi, Kelly kasa yönetimi, risk kontrolü ve SIA kendi kendini geliştiren algoritma (Self-Improving Algorithm)."""
 
 import json
 import logging
@@ -6,7 +6,9 @@ from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import func
 from utils.kelly import kelly_bet_amount
-from utils.weights_store import load_weights, save_weights
+from utils.weights_store import (
+    load_weights, save_weights, load_strategy_params, save_strategy_params
+)
 from config.settings import config, bot_config
 from database.models import Bet, Portfolio, ModelPerformance
 
@@ -464,16 +466,27 @@ class SIALoop:
         self.db_session_factory = db_session_factory
         self.config = cfg or config
         self.model_weights = self.config.MODEL_WEIGHTS.copy()
-        self.model_weights = self.config.MODEL_WEIGHTS.copy()
-        persisted = load_weights()
-        if persisted:
-            for k, v in persisted.items():
+        
+        # Load persisted weights
+        persisted_weights = load_weights()
+        if persisted_weights:
+            for k, v in persisted_weights.items():
                 if k in self.model_weights:
                     self.model_weights[k] = v
             logger.info(
                 "SIA weights loaded from disk: %s",
                 {k: round(v, 4) for k, v in self.model_weights.items()},
             )
+            
+        # Load persisted strategy parameters
+        persisted_strategy = load_strategy_params()
+        if persisted_strategy:
+            strategy = bot_config.strategy
+            if "min_edge" in persisted_strategy:
+                strategy.min_edge = float(persisted_strategy["min_edge"])
+            if "kelly_fraction" in persisted_strategy:
+                strategy.kelly_fraction = float(persisted_strategy["kelly_fraction"])
+            logger.info("SIA strategy parameters loaded from disk: %s", persisted_strategy)
 
     def calculate_brier_score(self, predictions: List[float], outcomes: List[bool]) -> float:
         """Calculate Brier Score."""
@@ -596,51 +609,103 @@ class SIALoop:
 
         return new_weights
 
+    def optimize_strategy_params(self, performance_summary: Dict[str, float]):
+        """SIA Financial Feedback Agent: Autonomous tuning of betting parameters.
+        
+        Inspired by hexo-ai/sia architecture: analyzes performance logs and 
+        updates the Target Agent's (bot) harness/settings.
+        """
+        if not performance_summary:
+            return
+
+        win_rate = performance_summary.get("win_rate", 0.5)
+        total_roi = performance_summary.get("total_roi", 0.0)
+        
+        # Access the strategy config
+        strategy = bot_config.strategy
+        
+        logger.info("SIA FINANCIAL FEEDBACK: Win Rate=%.2f%%, ROI=%.2f%%", win_rate * 100, total_roi)
+        
+        # 1. Selectivity (min_edge)
+        if win_rate < 0.45:
+            # Low win rate: tighten the filter
+            old_edge = strategy.min_edge
+            strategy.min_edge = min(0.15, strategy.min_edge + 0.01)
+            logger.info("  min_edge: %.2f -> %.2f (Selectivity INCREASED due to low Win Rate)", old_edge, strategy.min_edge)
+        elif win_rate > 0.60 and total_roi > 5:
+            # High win rate & profit: relax filter to find more trades
+            old_edge = strategy.min_edge
+            strategy.min_edge = max(0.01, strategy.min_edge - 0.005)
+            logger.info("  min_edge: %.2f -> %.2f (Selectivity RELAXED due to high performance)", old_edge, strategy.min_edge)
+
+        # 2. Risk Appetite (kelly_fraction)
+        if total_roi < -10:
+            # Significant drawdown: reduce risk
+            old_kelly = strategy.kelly_fraction
+            strategy.kelly_fraction = max(0.05, strategy.kelly_fraction - 0.05)
+            logger.info("  kelly_fraction: %.2f -> %.2f (Risk REDUCED due to drawdown)", old_kelly, strategy.kelly_fraction)
+        elif total_roi > 10 and win_rate > 0.55:
+            # High growth: slightly increase risk (capped at 0.25)
+            old_kelly = strategy.kelly_fraction
+            strategy.kelly_fraction = min(0.25, strategy.kelly_fraction + 0.02)
+            logger.info("  kelly_fraction: %.2f -> %.2f (Risk INCREASED due to strong growth)", old_kelly, strategy.kelly_fraction)
+            
+        # Persist changes
+        save_strategy_params({
+            "min_edge": strategy.min_edge,
+            "kelly_fraction": strategy.kelly_fraction
+        })
+
     def run_optimization_cycle(self) -> bool:
-        """Execute full optimization cycle."""
+        """Execute full SIA optimization cycle (Models + Strategy)."""
         if not self.db_session_factory:
             logger.error("No db_session_factory, cannot run optimization")
             return False
 
         db = self.db_session_factory()
         try:
-            logger.info("SIA Loop baslatiliyor...")
+            logger.info("SIA Multi-Agent Loop baslatiliyor...")
+            
+            # --- 1. Model Weights Optimization (Legacy SIA) ---
             performance = self.analyze_model_performance(days=30)
-            sorted_models = sorted(
-                performance.items(), key=lambda x: x[1]["brier_score"]
-            )
-            best_model = sorted_models[0][0]
-            worst_model = sorted_models[-1][0]
+            if performance:
+                new_weights = self.optimize_weights(performance)
+                self.model_weights = new_weights
+                if hasattr(self.config, "MODEL_WEIGHTS"):
+                    setattr(self.config, "MODEL_WEIGHTS", new_weights)
 
-            logger.info(
-                "En iyi model: %s (Brier: %.4f)",
-                best_model,
-                performance[best_model]["brier_score"],
-            )
-            logger.info(
-                "En kotu model: %s (Brier: %.4f)",
-                worst_model,
-                performance[worst_model]["brier_score"],
-            )
+            # --- 2. Strategy Parameter Optimization (Financial SIA) ---
+            # Aggregate overall stats for the feedback agent
+            win_count = db.query(Bet).filter(Bet.status == "won").count()
+            loss_count = db.query(Bet).filter(Bet.status == "lost").count()
+            total = win_count + loss_count
+            
+            portfolio = db.query(Portfolio).filter(Portfolio.id == 1).first()
+            initial = getattr(portfolio, "initial_value", 1000.0)
+            current_val = getattr(portfolio, "total_value", 1000.0)
+            roi = ((current_val - initial) / initial) * 100 if initial > 0 else 0
+            
+            summary = {
+                "win_rate": win_count / total if total > 0 else 0.5,
+                "total_roi": roi,
+                "total_bets": total
+            }
+            self.optimize_strategy_params(summary)
 
-            new_weights = self.optimize_weights(performance)
-            self.model_weights = new_weights
-            if hasattr(self.config, "MODEL_WEIGHTS"):
-                setattr(self.config, "MODEL_WEIGHTS", new_weights)
-
+            # --- 3. Persist and Record ---
             for model_name, perf in performance.items():
                 record = ModelPerformance(
                     model_name=model_name,
                     brier_score=perf["brier_score"],
                     accuracy=perf["accuracy"],
                     num_predictions=perf["num_predictions"],
-                    weight=new_weights.get(model_name, 0),
+                    weight=self.model_weights.get(model_name, 0),
                     recorded_at=datetime.now(timezone.utc),
                 )
                 db.add(record)
 
             db.commit()
-            logger.info("SIA Loop tamamlandi. Agirliklar guncellendi.")
+            logger.info("SIA Loop tamamlandi. Model agirliklari ve strateji parametreleri guncellendi.")
             return True
         except Exception as e:
             db.rollback()

@@ -59,7 +59,8 @@ def _cache_clear() -> None:
 # Per-host request throttle to keep us under Open-Meteo's free-tier burst
 # limits. Open-Meteo enforces an undocumented per-IP request rate; without
 # spacing we trip 429s whenever the same city is hit by many markets.
-_MIN_INTERVAL_S = 1.0  # 1s between calls  Open-Meteo free tier bursts at ~1 req/s
+# 3s interval is very safe for grouped requests.
+_MIN_INTERVAL_S = 3.0  
 _LAST_CALL_AT: dict[str, float] = {}
 _THROTTLE_LOCK = threading.Lock()
 
@@ -142,12 +143,12 @@ class MeteoFetcher:
                 },
                 timeout=15,
             )
+            if resp.status_code == 429:
+                logger.warning("Open-Meteo 429 Rate Limit! Waiting 30s...")
+                time.sleep(30)
+                return None
+            resp.raise_for_status()
         except requests.RequestException:
-            # Cache the failure briefly so we do not retry the same 429
-            # storm from N markets in a single scan cycle.
-            _cache_set(cache_key, None)
-            raise
-        resp.raise_for_status()
         data = resp.json()
 
         daily = data.get("daily", {})

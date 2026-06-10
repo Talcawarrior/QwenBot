@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 set PYTHONPATH=C:\Users\fdemir\Documents\New project\QwenBot
 set DRY_RUN=true
 set HOST=127.0.0.1

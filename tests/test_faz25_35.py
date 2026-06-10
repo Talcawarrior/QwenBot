@@ -1,6 +1,6 @@
 """Tests for Faz 2.5-3.5: Ensemble fix + should_bet filter tightening."""
 import sys, os, tempfile
-sys.path.insert(0, r"C:\Users\fdemir\Documents\New project\QwenBot")
+# sys.path.insert(0, r"C:\Users\fdemir\Documents\New project\QwenBot")
 
 _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
 os.close(_db_fd)
@@ -175,7 +175,8 @@ def test_ev_positive_check():
 
 def test_metoo_filter_has_lat_lon():
     import pathlib
-    text = pathlib.Path(r"C:\Users\fdemir\Documents\New project\QwenBot\scrapers\meteo.py").read_text(encoding="utf-8")
+    # Use latin-1 or ignore errors to handle non-utf8 characters in the source file
+    text = pathlib.Path("scrapers/meteo.py").read_text(encoding="utf-8", errors="ignore")
     assert "WeatherMarket.latitude != 0" in text
     assert "WeatherMarket.longitude != 0" in text
     print("PASS: meteo lat/lon filter")

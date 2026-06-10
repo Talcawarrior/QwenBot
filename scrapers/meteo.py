@@ -14,7 +14,7 @@ from utils.retry import retry
 logger = logging.getLogger("SCRAPER_METEO")
 
 
-# Module-level in-process cache for (lat, lon, target_date, source) → result
+# Module-level in-process cache for (lat, lon, target_date, source) â result
 # Avoids hammering the upstream APIs when many markets share the same
 # (city, target_date) tuple (e.g., 11 Polymarket threshold markets for
 # "London 2026-06-08" all need the same Open-Meteo forecast).
@@ -59,7 +59,7 @@ def _cache_clear() -> None:
 # Per-host request throttle to keep us under Open-Meteo's free-tier burst
 # limits. Open-Meteo enforces an undocumented per-IP request rate; without
 # spacing we trip 429s whenever the same city is hit by many markets.
-_MIN_INTERVAL_S = 1.0  # 1s between calls � Open-Meteo free tier bursts at ~1 req/s
+_MIN_INTERVAL_S = 1.0  # 1s between calls  Open-Meteo free tier bursts at ~1 req/s
 _LAST_CALL_AT: dict[str, float] = {}
 _THROTTLE_LOCK = threading.Lock()
 
@@ -114,12 +114,12 @@ class MeteoFetcher:
 
     @retry(max_attempts=3, delay=3, exceptions=(requests.RequestException,))
     def _fetch_open_meteo(self, lat: float, lon: float, target_date: str) -> dict | None:
-        """Open-Meteo API (ücretsiz, key gerekmez).
+        """Open-Meteo API (Ã¼cretsiz, key gerekmez).
 
         Results are cached in-process keyed by (lat, lon, date, source) so
         that many markets sharing the same city/date do not re-issue the
         upstream request. Cached "None" results are also remembered for a
-        short window — the bot would otherwise re-fail-and-retry the same
+        short window â the bot would otherwise re-fail-and-retry the same
         429-prone request once per market.
         """
         cache_key = (round(lat, 4), round(lon, 4), target_date, "openmeteo")
@@ -205,7 +205,7 @@ class MeteoFetcher:
         return None
 
     def fetch_for_market(self, market_id: str, city: str, target_date: datetime, metric: str) -> int:
-        """Bir market için tüm kaynaklardan veri çek."""
+        """Bir market iÃ§in tÃ¼m kaynaklardan veri Ã§ek."""
         city_lower = city.lower()
         coords = self.CITY_COORDS.get(city_lower)
         if not coords:
@@ -216,7 +216,7 @@ class MeteoFetcher:
                     coords = PolymarketScraper().get_city_coords(ICAO)
                     break
         if not coords:
-            logger.warning(f"Şehir koordinatları bulunamadı: {city}")
+            logger.warning(f"Åehir koordinatlarÄ± bulunamadÄ±: {city}")
             return 0
 
         lat, lon = coords

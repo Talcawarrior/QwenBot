@@ -135,7 +135,7 @@ async def root():
     dashboard_path = os.path.join(os.path.dirname(__file__), "dashboard.html")
     if os.path.exists(dashboard_path):
         return FileResponse(dashboard_path)
-    return HTMLResponse("<h1>Dashboard yükleniyor...</h1>")
+    return HTMLResponse("<h1>Dashboard yÃ¼kleniyor...</h1>")
 
 
 @app.get("/api/status")
@@ -247,12 +247,12 @@ async def get_signals():
 
     Edge semantics (UX fix #6):
     - ``entry_edge``   = the edge that triggered the bet
-                         (model_prob_at_entry âˆ’ market_price_at_entry),
+                         (model_prob_at_entry Ã¢Ëâ market_price_at_entry),
                          taken from the originating Analysis row.
     - ``live_edge``    = current "would I enter at today's price?" edge
-                         (model_prob_now âˆ’ current_price), kept under
+                         (model_prob_now Ã¢Ëâ current_price), kept under
                          the legacy ``edge`` key for backward compat.
-    - ``move_pct``     = (current âˆ’ entry) / entry, signed "” useful at
+    - ``move_pct``     = (current Ã¢Ëâ entry) / entry, signed "â useful at
                          a glance to see how much the price has run
                          since entry. Positive = good for a YES bet.
     For a freshly placed bet the entry_edge explains why we bought;
@@ -304,7 +304,7 @@ async def get_signals():
                 if origin is not None and origin.edge is not None:
                     entry_edge = float(origin.edge)
 
-                # Move % since entry "” derived directly from prices so
+                # Move % since entry "â derived directly from prices so
                 # the UI can show price momentum even without an analysis
                 # row present.
                 if entry is not None and current is not None and entry > 0:
@@ -324,10 +324,10 @@ async def get_signals():
                         float(bet.unrealized_pnl) if bet.unrealized_pnl is not None else 0.0
                     ),
                     "fair_value": fair_value,
-                    "edge": live_edge,        # legacy key "” now means "live edge"
+                    "edge": live_edge,        # legacy key "â now means "live edge"
                     "entry_edge": entry_edge, # UX fix #6: edge at the time of entry
                     "live_edge": live_edge,   # explicit alias for clarity
-                    "move_pct": move_pct,     # UX fix #6: (current âˆ’ entry) / entry
+                    "move_pct": move_pct,     # UX fix #6: (current Ã¢Ëâ entry) / entry
                     "ladder_orders": _safe_parse_ladder(bet.ladder_data),
                     "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
                     "resolution_date": res_date.isoformat() if res_date else None,
@@ -342,14 +342,14 @@ async def get_signals():
         db.close()
 
 
-# METRIC_MAP removed — forecasts are now stored with the market's canonical
+# METRIC_MAP removed â forecasts are now stored with the market's canonical
 # metric name at write time, so no bridging is needed.
 _METRIC_MAP = {}  # legacy stub kept for test compatibility
 
 
 @app.get("/api/markets")
 async def get_markets():
-    """Get all future active weather markets (Global Market Watch) "” today + 2 days only."""
+    """Get all future active weather markets (Global Market Watch) "â today + 2 days only."""
     from datetime import timedelta
     from engine.calculator import Calculator
     from database.models import WeatherForecast
@@ -601,7 +601,7 @@ async def start_bot():
         state.tasks["settlement"] = asyncio.create_task(settlement_loop(), name="settlement_loop")
 
         await broadcast_message({"type": "bot_started", "timestamp": datetime.now().isoformat()})
-        return {"status": "started", "message": "Bot başlatıldı"}
+        return {"status": "started", "message": "Bot baÅlatÄ±ldÄ±"}
 
 
 @app.post("/api/stop")
@@ -631,7 +631,7 @@ async def reset_bot():
     - Deletes all Analysis rows. They are regenerable on the next
       scan; keeping them would cause the 'total_signals' counter
       to remain non-zero after a reset.
-    - Leaves WeatherMarket rows in place "” they are the universe
+    - Leaves WeatherMarket rows in place "â they are the universe
       of tradable markets and are re-priced on the next scan.
 
     In-memory state is wiped last so the response uses fresh
@@ -688,7 +688,7 @@ async def reset_bot():
 
     return {
         "status": "reset",
-        "message": "Bot sıfırlandı ve yeniden başlatıldı",
+        "message": "Bot sÄ±fÄ±rlandÄ± ve yeniden baÅlatÄ±ldÄ±",
         "cancelled_bets": int(cancelled_bets or 0),
         "deleted_analyses": int(deleted_analyses or 0),
     }
@@ -724,7 +724,7 @@ async def scan_and_bet_loop():
     the FastAPI event loop stays responsive. Without this, a single scan
     cycle that fetches 50+ Polymarket markets and runs 50+ weather/forecast
     calls can block the loop for 30+ seconds, which makes every
-    `/api/status`, `/api/signals`, and the WebSocket push hang "” and
+    `/api/status`, `/api/signals`, and the WebSocket push hang "â and
     makes the user think "Start button doesn't work after Reset".
     """
     from database.models import Bet, Analysis
@@ -867,9 +867,9 @@ def run_cli():
     ])
     args = parser.parse_args()
 
-    # DB'yi hazırla
+    # DB'yi hazÄ±rla
     init_db()
-    logger.info("Database hazır")
+    logger.info("Database hazÄ±r")
     ensure_initial_portfolio()
 
     from jobs.scheduler import (
@@ -889,11 +889,11 @@ def run_cli():
 
     if args.command == "run":
         import uvicorn
-        logger.info("ðŸš€ Bot başlatılıyor...")
+        logger.info("Ã°Å¸Å¡â¬ Bot baÅlatÄ±lÄ±yor...")
         port = int(os.getenv("PORT", str(config.PORT)))
         uvicorn.run(app, host=config.HOST, port=port)
     elif args.command == "test":
-        logger.info("ðŸ§ª Test modu...")
+        logger.info("Ã°Å¸Â§Âª Test modu...")
         for name, func in commands.items():
             if name != "bet" and name != "settle":
                 try:

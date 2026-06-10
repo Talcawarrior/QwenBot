@@ -266,6 +266,10 @@
         
         // WebSocket connection
         function connectWebSocket() {
+            if (!window.location.host) {
+                console.warn('WebSocket disabled: UI running as local file');
+                return;
+            }
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
             
@@ -576,6 +580,35 @@
                 loadStatus();
                 loadSignals();
             }, 5000);
+            
+            // Analytics Charts
+            const ctxPortfolio = document.getElementById('portfolioChart').getContext('2d');
+            new Chart(ctxPortfolio, {
+                type: 'line',
+                data: {
+                    labels: Array.from({length: 10}, (_, i) => i + 1),
+                    datasets: [{
+                        label: 'Portfolio Değeri ($)',
+                        data: [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000],
+                        borderColor: '#667eea',
+                        tension: 0.1
+                    }]
+                },
+                options: { responsive: true, scales: { y: { beginAtZero: false } } }
+            });
+
+            const ctxWinRate = document.getElementById('winRateChart').getContext('2d');
+            new Chart(ctxWinRate, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Kazanılan', 'Kaybedilen'],
+                    datasets: [{
+                        data: [0, 0],
+                        backgroundColor: ['#22c55e', '#ef4444']
+                    }]
+                },
+                options: { responsive: true }
+            });
         });
     </script>
 </body>

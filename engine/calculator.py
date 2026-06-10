@@ -336,6 +336,8 @@ class WeatherEngine:
         self.config = cfg or config
         self.session: Optional[aiohttp.ClientSession] = None
         self.model_weights = self.config.get_normalized_weights()
+        # Local cache for the current session to avoid redundant fetches (e.g. max/min overlap)
+        self._forecast_cache = {}
 
     @staticmethod
     def _compute_effective_min_edge(market) -> float:
@@ -392,7 +394,7 @@ class WeatherEngine:
         latitude: float,
         longitude: float,
         target_date: Optional[datetime] = None,
-        market_id: str = "",
+        market_ids: List[str] = None,
         db_session=None,
         metric: str = "temperature_2m_max",
     ) -> Optional[Dict]:
@@ -407,44 +409,62 @@ class WeatherEngine:
             if api_name not in api_model_names:
                 api_model_names.append(api_name)
         models_str = ",".join(api_model_names)
+        
+        # Cache check
+        target_str = target_date.strftime("%Y-%m-%d")
+        cache_key = (round(latitude, 4), round(longitude, 4), target_str)
+        if cache_key in self._forecast_cache:
+            data = self._forecast_cache[cache_key]
+            logger.debug("Ensemble cache hit for %s", cache_key)
+        else:
+            url = f"{Config.OPEN_METEO_API}/forecast"
+            params = {
+                "latitude": latitude,
+                "longitude": longitude,
+                "daily": "temperature_2m_max,temperature_2m_min",
+                "timezone": "auto",
+                "models": models_str,
+                "forecast_days": 14,
+            }
 
-        url = f"{Config.OPEN_METEO_API}/forecast"
-        params = {
-            "latitude": latitude,
-            "longitude": longitude,
-            "daily": "temperature_2m_max,temperature_2m_min",
-            "timezone": "auto",
-            "models": models_str,
-            "forecast_days": 14,
-        }
+            try:
+                if not self.session or self.session.closed:
+                    await self.start()
+
+                async with self.session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json()
+                    self._forecast_cache[cache_key] = data
+            except Exception as e:
+                logger.error("get_multi_model_forecast fetch error: %s", e)
+                return None
 
         try:
-            if not self.session or self.session.closed:
-                await self.start()
+            model_temps = {}
+            daily_data = data.get("daily", {})
+            times = daily_data.get("time", [])
+            if not times:
+                return None
 
-            async with self.session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status != 200:
-                    return None
-                data = await resp.json()
-                model_temps = {}
-                daily_data = data.get("daily", {})
-                times = daily_data.get("time", [])
-                if not times:
-                    return None
+            target_idx = None
+            for i, t in enumerate(times):
+                if t.startswith(target_str):
+                    target_idx = i
+                    break
 
-                target_idx = None
-                target_str = target_date.strftime("%Y-%m-%d")
-                for i, t in enumerate(times):
-                    if t.startswith(target_str):
-                        target_idx = i
-                        break
-
-                if target_idx is None:
-                    return None
+            if target_idx is None:
+                return None
 
                 for internal_name in self.model_weights.keys():
                     api_name = OPEN_METEO_MODEL_MAP.get(internal_name, internal_name)
-                    key = f"temperature_2m_max_{api_name}"
+                    # Use the metric requested to pick the right daily data key
+                    # although we fetch both max and min.
+                    api_metric = "temperature_2m_max"
+                    if "min" in metric.lower():
+                        api_metric = "temperature_2m_min"
+                    
+                    key = f"{api_metric}_{api_name}"
                     if key in daily_data:
                         temps = daily_data[key]
                         if target_idx < len(temps) and temps[target_idx] is not None:
@@ -461,15 +481,29 @@ class WeatherEngine:
                 weighted_var = sum(self.model_weights.get(m, 0.0) * (t - weighted_mean)**2 for m, t in model_temps.items()) / total_weight
                 weighted_std = max(weighted_var ** 0.5, 0.5)
 
-                if db_session is not None and market_id:
+                if db_session is not None and market_ids:
                     from database.models import WeatherForecast
-                    for mn, tmp in model_temps.items():
-                        db_session.add(WeatherForecast(market_id=market_id, city=city_code, lat=latitude, lon=longitude, target_date=target_date, metric=metric, source=mn, predicted_value=float(tmp), model_weight=self.model_weights.get(mn, 0.0), fetched_at=datetime.now(timezone.utc).replace(tzinfo=None), raw_data=str({"model": mn, "temp": tmp, "ensemble": True})))
+                    for mid in market_ids:
+                        for mn, tmp in model_temps.items():
+                            db_session.add(WeatherForecast(
+                                market_id=mid,
+                                city=city_code,
+                                lat=latitude,
+                                lon=longitude,
+                                target_date=target_date,
+                                metric=metric,
+                                source=mn,
+                                predicted_value=float(tmp),
+                                model_weight=self.model_weights.get(mn, 0.0),
+                                fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                                raw_data=str({"model": mn, "temp": tmp, "ensemble": True})
+                            ))
                     try:
                         db_session.commit()
-                    except Exception:
+                        logger.info("Ensemble persisted for %d markets, coords=(%s, %s)", len(market_ids), latitude, longitude)
+                    except Exception as e:
                         db_session.rollback()
-                    logger.info("Ensemble persisted: %s models, market=%s", len(model_temps), market_id)
+                        logger.error("Failed to persist ensemble: %s", e)
 
                 return {
                     "weighted_mean": weighted_mean,
@@ -478,7 +512,8 @@ class WeatherEngine:
                     "model_temps": model_temps,
                     "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
                 }
-        except Exception:
+        except Exception as e:
+            logger.error("get_multi_model_forecast error: %s", e)
             return None
 
     def _db_consensus(self, market_id: str) -> Optional[Dict]:

@@ -204,8 +204,8 @@ class MeteoFetcher:
         _cache_set(cache_key, None)
         return None
 
-    def fetch_for_market(self, market_id: str, city: str, target_date: datetime, metric: str) -> int:
-        """Bir market iÃ§in tÃ¼m kaynaklardan veri Ã§ek."""
+    def fetch_for_markets(self, market_ids: list[str], city: str, target_date: datetime, metric: str) -> int:
+        """Fetch weather data for a group of markets sharing the same city/date/metric."""
         city_lower = city.lower()
         coords = self.CITY_COORDS.get(city_lower)
         if not coords:
@@ -227,48 +227,45 @@ class MeteoFetcher:
             ("weatherapi", self._fetch_weatherapi),
         ]
 
-        saved = 0
+        total_saved = 0
         for source_name, fetch_func in sources:
             try:
                 result = fetch_func(lat, lon, date_str)
                 if result and metric in result:
+                    predicted_value = result[metric]
                     with get_session() as session:
-                        # Convert any legacy or different metric key names safely
-                        predicted_value = result[metric]
-                        forecast = WeatherForecast(
-                            market_id=market_id,
-                            city=city,
-                            lat=lat,
-                            lon=lon,
-                            target_date=target_date,
-                            metric=metric,
-                            source=source_name,
-                            predicted_value=predicted_value,
-                            fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                            raw_data=str(result)
-                        )
-                        session.add(forecast)
-                    saved += 1
+                        for mid in market_ids:
+                            forecast = WeatherForecast(
+                                market_id=mid,
+                                city=city,
+                                lat=lat,
+                                lon=lon,
+                                target_date=target_date,
+                                metric=metric,
+                                source=source_name,
+                                predicted_value=predicted_value,
+                                fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                                raw_data=str(result)
+                            )
+                            session.add(forecast)
+                        session.commit()
+                    total_saved += len(market_ids)
                     logger.info(
-                        f"[{source_name}] {city} {date_str}: "
-                        f"{metric}={result[metric]}"
+                        f"[{source_name}] Persisted for {len(market_ids)} markets: "
+                        f"{city} {date_str} {metric}={predicted_value}"
                     )
             except Exception as e:
-                logger.error(f"[{source_name}] hata: {e}")
+                logger.error(f"[{source_name}] group fetch error: {e}")
                 continue
 
-        return saved
+        return total_saved
 
     def fetch_all_markets(self) -> int:
-        """Fetch ensemble forecast for all open markets.
-
-        Tries WeatherEngine 8-model ensemble first.
-        Falls back to MeteoFetcher backup (default Open-Meteo + WeatherAPI).
-        """
+        """Fetch ensemble forecast for all open markets with deduplication."""
         from engine.calculator import WeatherEngine
         import asyncio
+        from collections import defaultdict
 
-        total = 0
         with get_session() as session:
             open_markets = (
                 session.query(WeatherMarket)
@@ -282,52 +279,77 @@ class MeteoFetcher:
                 )
                 .all()
             )
-            markets_data = [
-                (m.id, m.city or "", m.city_code or "", m.target_date,
-                 m.metric or "", m.latitude or 0.0, m.longitude or 0.0)
-                for m in open_markets
-            ]
+            
+            # Group markets by (lat, lon, target_date)
+            # We fetch both MAX and MIN in one call, so grouping by date is enough.
+            # bucket[key] = list of (market_id, metric)
+            groups = defaultdict(list)
+            group_info = {} # key -> (city, city_code, target_date, lat, lon)
+            
+            for m in open_markets:
+                key = (
+                    round(m.latitude or 0.0, 4),
+                    round(m.longitude or 0.0, 4),
+                    m.target_date.strftime("%Y-%m-%d")
+                )
+                groups[key].append((m.id, m.metric or "temperature_max"))
+                if key not in group_info:
+                    group_info[key] = (
+                        m.city or "", 
+                        m.city_code or "", 
+                        m.target_date, 
+                        m.latitude or 0.0, 
+                        m.longitude or 0.0
+                    )
 
+        total = 0
         we = WeatherEngine(db_session_factory=get_session)
-
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        
         try:
-            for mid, city, city_code, target_date, metric, lat, lon in markets_data:
+            for key, markets in groups.items():
+                city, city_code, target_date, lat, lon = group_info[key]
+                
+                # Separate markets by metric within the city/date group
+                mids_by_metric = defaultdict(list)
+                for mid, metric in markets:
+                    mids_by_metric[metric].append(mid)
+
                 try:
-                    if lat == 0.0 and lon == 0.0:
-                        count = self.fetch_for_market(mid, city, target_date, metric)
+                    # For each metric type (max/min), we want to ensure data is persisted.
+                    # WeatherEngine fetches both in one HTTP call, but currently persists one.
+                    # Optimization: We'll call it for each unique metric in the group.
+                    # Because _FETCH_CACHE isn't in WeatherEngine, we still rely on 
+                    # grouping here to reduce redundant market-level work.
+                    for metric, mids in mids_by_metric.items():
+                        # 1. Try Ensemble (8-model)
+                        try:
+                            result = loop.run_until_complete(
+                                we.get_multi_model_forecast(
+                                    city_code=city_code or city,
+                                    latitude=lat,
+                                    longitude=lon,
+                                    target_date=target_date,
+                                    market_ids=mids,
+                                    db_session=session,
+                                    metric=metric,
+                                )
+                            )
+
+                            if result and result.get("model_count", 0) >= 3:
+                                total += result["model_count"] * len(mids)
+                                continue
+                        except Exception as e:
+                            logger.debug("Ensemble failed for group %s %s: %s", key, metric, e)
+
+                        # 2. Fallback to Backup (Open-Meteo + WeatherAPI)
+                        # fetch_for_markets handles its own per-host throttle and internal cache
+                        count = self.fetch_for_markets(mids, city, target_date, metric)
                         total += count
-                        continue
-
-                    try:
-                        result = loop.run_until_complete(
-                            we.get_multi_model_forecast(
-                                city_code=city_code,
-                                latitude=lat,
-                                longitude=lon,
-                                target_date=target_date,
-                                market_id=mid,
-                                db_session=session,
-                                metric=metric,
-                            )
-                        )
-
-                        if result and result.get("model_count", 0) >= 3:
-                            total += result["model_count"]
-                            logger.info(
-                                "Ensemble OK: %s (%s models)", mid, result["model_count"]
-                            )
-                            continue
-                    except Exception as e:
-                        logger.debug("Ensemble failed for %s: %s", mid, e)
-
-                    count = self.fetch_for_market(mid, city, target_date, metric)
-                    total += count
-                    logger.info("Backup fetch: %s (%s sources)", mid, count)
 
                 except Exception as e:
-                    logger.error("Market %s forecast error: %s", mid, e)
+                    logger.error("Group %s bucket error: %s", key, e)
                     continue
         finally:
             loop.close()

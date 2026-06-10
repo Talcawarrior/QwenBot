@@ -92,36 +92,36 @@
         <!-- Portfolio Stats -->
         <div class="card-grid">
             <div class="card">
-                <div class="card-title">Portfolio Değeri</div>
+                <div class="card-title">Net Sermaye (Cash)</div>
                 <div class="card-value" id="portfolioValue">$1,000.00</div>
             </div>
             <div class="card">
-                <div class="card-title">Günlük PnL</div>
-                <div class="card-value" id="dailyPnl">$0.00</div>
+                <div class="card-title">Realized PnL (USD)</div>
+                <div class="card-value" id="realizedPnl">$0.00</div>
             </div>
             <div class="card">
-                <div class="card-title">Açık PnL <span style="font-size:11px;opacity:0.6">(unrealized)</span></div>
+                <div class="card-title">Unrealized PnL (USD)</div>
                 <div class="card-value" id="unrealizedPnl">$0.00</div>
             </div>
             <div class="card">
-                <div class="card-title">Toplam PnL <span style="font-size:11px;opacity:0.6">(realized+unrealized)</span></div>
+                <div class="card-title">Toplam PnL (USD)</div>
                 <div class="card-value" id="totalPnl">$0.00</div>
             </div>
             <div class="card">
-                <div class="card-title">Smart Pool (%40)</div>
-                <div class="card-value" id="smartPool">$400.00</div>
+                <div class="card-title">Günlük ROI</div>
+                <div class="card-value" id="dailyRoi">%0.00</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Toplam ROI</div>
+                <div class="card-value" id="totalRoi">%0.00</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Kazanan / Kaybeden</div>
+                <div class="card-value" id="winLossRatio" style="font-size: 18px;">0 / 0</div>
             </div>
             <div class="card">
                 <div class="card-title">Açık Pozisyon</div>
                 <div class="card-value" id="exposure">$0.00</div>
-            </div>
-            <div class="card">
-                <div class="card-title">Toplam Sinyal</div>
-                <div class="card-value" id="totalSignals">0</div>
-            </div>
-            <div class="card">
-                <div class="card-title">Toplam Bahis</div>
-                <div class="card-value" id="totalBets">0</div>
             </div>
         </div>
         
@@ -340,28 +340,29 @@
                     badge.textContent = 'STOPPED';
                 }
                 
-                // Update cards
                 document.getElementById('portfolioValue').textContent = `$${data.portfolio.current.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
-                const dailyPnlEl = document.getElementById('dailyPnl');
-                dailyPnlEl.textContent = `$${data.portfolio.daily_pnl.toFixed(2)}`;
-                dailyPnlEl.className = `card-value ${data.portfolio.daily_pnl >= 0 ? 'positive' : 'negative'}`;
-                // Unrealized PnL (open positions) + total PnL
-                // (realized + unrealized). daily_pnl is realised-only
-                // so it shows 0 until a bet settles, hiding the
-                // true PnL of an open book.
+                
+                const realizedPnlEl = document.getElementById('realizedPnl');
+                realizedPnlEl.textContent = `$${data.portfolio.realized_pnl.toFixed(2)}`;
+                realizedPnlEl.className = `card-value ${data.portfolio.realized_pnl >= 0 ? 'positive' : 'negative'}`;
+
                 const unrealEl = document.getElementById('unrealizedPnl');
+                unrealEl.textContent = `$${data.portfolio.unrealized_pnl.toFixed(2)}`;
+                unrealEl.className = `card-value ${data.portfolio.unrealized_pnl >= 0 ? 'positive' : 'negative'}`;
+
                 const totalEl = document.getElementById('totalPnl');
-                if (unrealEl && data.portfolio.unrealized_pnl !== undefined) {
-                    const u = Number(data.portfolio.unrealized_pnl) || 0;
-                    unrealEl.textContent = `${u >= 0 ? '' : '-'}$${Math.abs(u).toFixed(2)}`;
-                    unrealEl.className = `card-value ${u >= 0 ? 'positive' : 'negative'}`;
-                }
-                if (totalEl && data.portfolio.total_pnl !== undefined) {
-                    const t = Number(data.portfolio.total_pnl) || 0;
-                    totalEl.textContent = `${t >= 0 ? '' : '-'}$${Math.abs(t).toFixed(2)}`;
-                    totalEl.className = `card-value ${t >= 0 ? 'positive' : 'negative'}`;
-                }
-                document.getElementById('smartPool').textContent = `$${data.portfolio.smart_pool.toFixed(2)}`;
+                totalEl.textContent = `$${data.portfolio.total_pnl.toFixed(2)}`;
+                totalEl.className = `card-value ${data.portfolio.total_pnl >= 0 ? 'positive' : 'negative'}`;
+
+                const dailyRoiEl = document.getElementById('dailyRoi');
+                dailyRoiEl.textContent = `%${data.portfolio.daily_roi.toFixed(2)}`;
+                dailyRoiEl.className = `card-value ${data.portfolio.daily_roi >= 0 ? 'positive' : 'negative'}`;
+
+                const totalRoiEl = document.getElementById('totalRoi');
+                totalRoiEl.textContent = `%${data.portfolio.total_roi.toFixed(2)}`;
+                totalRoiEl.className = `card-value ${data.portfolio.total_roi >= 0 ? 'positive' : 'negative'}`;
+
+                document.getElementById('winLossRatio').textContent = `${data.stats.win_count} / ${data.stats.loss_count}`;
                 document.getElementById('exposure').textContent = `$${data.portfolio.exposure.toFixed(2)}`;
 
                 // Total signals / bets counters. These used to update only

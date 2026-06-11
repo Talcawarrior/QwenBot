@@ -71,15 +71,6 @@ class StrategyConfig:
     # ramps to edge_escalation_multiplier * min_edge at 0h.
     edge_escalation_hours: int = 24
     edge_escalation_multiplier: float = 2.0
-    # Time-to-close edge escalation. As a market approaches its
-    # resolution time, Polymarket prices move fast on the public
-    # weather consensus and forecast uncertainty is already low.
-    # We demand a stronger edge in the last N hours before close
-    # so the bot is less willing to take a late bet at a thin edge.
-    # Linear ramp: 1x min_edge at edge_escalation_hours, then
-    # ramps to edge_escalation_multiplier * min_edge at 0h.
-    edge_escalation_hours: int = 24
-    edge_escalation_multiplier: float = 2.0
     min_sources: int = 2            # En az 2 kaynak (openmeteo + weatherapi ile calisiyor)
     fee_drag: float = 0.02          # Polymarket taker fee %2
     # Bot scope: today + 1 + 2 days ahead (0..2 inclusive).

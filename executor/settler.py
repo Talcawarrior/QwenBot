@@ -145,8 +145,8 @@ class SettlementEngine:
                 fee = payout * self.fee_rate
                 realized_pnl = payout - stake - fee
             else:
-                fee = stake * self.fee_rate
-                realized_pnl = -stake - fee
+                # Kaybeden bahisten Polymarket fee kesmez
+                realized_pnl = -stake
 
             bet.realized_pnl = round(realized_pnl, 2)
             bet.pnl = round(realized_pnl, 2)

@@ -150,8 +150,8 @@ class MarketParser:
                     value = float(match.group(1))
                     unit = "fahrenheit" if "f" in pattern.lower() or "f" in question.lower() else "celsius"
 
-                    # Convert Fahrenheit to Celsius
-                    if unit == "fahrenheit" or value > 60:
+                    # Convert Fahrenheit to Celsius (only by unit, NOT by value)
+                    if unit == "fahrenheit":
                         value_c = (value - 32) * 5 / 9
                         return round(value_c, 1), "celsius"
                     return round(value, 1), "celsius"

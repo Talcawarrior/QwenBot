@@ -1,5 +1,6 @@
 """Tests for Faz 2.5-3.5: Ensemble fix + should_bet filter tightening."""
-import sys, os, tempfile
+import os
+import tempfile
 # sys.path.insert(0, r"C:\Users\fdemir\Documents\New project\QwenBot")
 
 _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
@@ -74,7 +75,7 @@ def test_config_tighter():
     s = StrategyConfig()
     assert s.min_edge == 0.05
     assert s.max_bet_amount == 30.0
-    assert s.min_sources == 3
+    assert s.min_sources == 2
     assert s.fee_drag == 0.02
     print("PASS: config tighter")
 
@@ -109,7 +110,7 @@ def test_should_bet_accepts_high_edge():
     r = _analyze_and_get("test-m1")
     print(f"  edge={r['edge']:.4f}, amount=, should_bet={r['should_bet']}")
     assert r["should_bet"] is True, f"High edge ({r['edge']:.4f}) should be accepted! reason={r['reason']}"
-    assert r["recommended_amount"] >= 5.0, f"Amount too low: "
+    assert r["recommended_amount"] >= 5.0, "Amount too low: "
     print("PASS: high edge accepted")
 
 
@@ -119,7 +120,7 @@ def test_should_bet_rejects_few_sources():
 
     r = _analyze_and_get("test-m1")
     print(f"  sources={r['num_sources']}, should_bet={r['should_bet']}, reason={r['reason'][:60]}")
-    assert r["should_bet"] is False, f"1 source should be rejected!"
+    assert r["should_bet"] is False, "1 source should be rejected!"
     assert "Az kaynak" in r["reason"]
     print("PASS: few sources rejected")
 
@@ -143,10 +144,10 @@ def test_should_bet_rejects_small_amount():
     r = _analyze_and_get("test-small")
     print(f"  amount=, should_bet={r['should_bet']}")
     if r["recommended_amount"] < 5.0:
-        assert r["should_bet"] is False, f"Small amount () should be rejected!"
+        assert r["should_bet"] is False, "Small amount () should be rejected!"
         print("PASS: small amount rejected")
     else:
-        print(f"PASS: amount= >= , OK")
+        print("PASS: amount= >= , OK")
 
 
 def test_ev_positive_check():

@@ -461,62 +461,62 @@ class WeatherEngine:
             if target_idx is None:
                 return None
 
-                for internal_name in self.model_weights.keys():
-                    api_name = OPEN_METEO_MODEL_MAP.get(internal_name, internal_name)
-                    # Use the metric requested to pick the right daily data key
-                    # although we fetch both max and min.
-                    api_metric = "temperature_2m_max"
-                    if "min" in metric.lower():
-                        api_metric = "temperature_2m_min"
-                    
-                    key = f"{api_metric}_{api_name}"
-                    if key in daily_data:
-                        temps = daily_data[key]
-                        if target_idx < len(temps) and temps[target_idx] is not None:
-                            model_temps[internal_name] = temps[target_idx]
+            for internal_name in self.model_weights.keys():
+                api_name = OPEN_METEO_MODEL_MAP.get(internal_name, internal_name)
+                # Use the metric requested to pick the right daily data key
+                # although we fetch both max and min.
+                api_metric = "temperature_2m_max"
+                if "min" in metric.lower():
+                    api_metric = "temperature_2m_min"
+                
+                key = f"{api_metric}_{api_name}"
+                if key in daily_data:
+                    temps = daily_data[key]
+                    if target_idx < len(temps) and temps[target_idx] is not None:
+                        model_temps[internal_name] = temps[target_idx]
 
-                if not model_temps:
-                    return None
+            if not model_temps:
+                return None
 
-                # Calculate consensus
-                total_weight = sum(self.model_weights.get(m, 0.0) for m in model_temps.keys())
-                if total_weight == 0:
-                    return None
-                weighted_mean = sum(self.model_weights.get(m, 0.0) * t for m, t in model_temps.items()) / total_weight
-                weighted_var = sum(self.model_weights.get(m, 0.0) * (t - weighted_mean)**2 for m, t in model_temps.items()) / total_weight
-                weighted_std = max(weighted_var ** 0.5, 0.5)
+            # Calculate consensus
+            total_weight = sum(self.model_weights.get(m, 0.0) for m in model_temps.keys())
+            if total_weight == 0:
+                return None
+            weighted_mean = sum(self.model_weights.get(m, 0.0) * t for m, t in model_temps.items()) / total_weight
+            weighted_var = sum(self.model_weights.get(m, 0.0) * (t - weighted_mean)**2 for m, t in model_temps.items()) / total_weight
+            weighted_std = max(weighted_var ** 0.5, 0.5)
 
-                if db_session is not None and market_ids:
-                    from database.models import WeatherForecast
-                    for mid in market_ids:
-                        for mn, tmp in model_temps.items():
-                            db_session.add(WeatherForecast(
-                                market_id=mid,
-                                city=city_code,
-                                lat=latitude,
-                                lon=longitude,
-                                target_date=target_date,
-                                metric=metric,
-                                source=mn,
-                                predicted_value=float(tmp),
-                                model_weight=self.model_weights.get(mn, 0.0),
-                                fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                                raw_data=str({"model": mn, "temp": tmp, "ensemble": True})
-                            ))
-                    try:
-                        db_session.commit()
-                        logger.info("Ensemble persisted for %d markets, coords=(%s, %s)", len(market_ids), latitude, longitude)
-                    except Exception as e:
-                        db_session.rollback()
-                        logger.error("Failed to persist ensemble: %s", e)
+            if db_session is not None and market_ids:
+                from database.models import WeatherForecast
+                for mid in market_ids:
+                    for mn, tmp in model_temps.items():
+                        db_session.add(WeatherForecast(
+                            market_id=mid,
+                            city=city_code,
+                            lat=latitude,
+                            lon=longitude,
+                            target_date=target_date,
+                            metric=metric,
+                            source=mn,
+                            predicted_value=float(tmp),
+                            model_weight=self.model_weights.get(mn, 0.0),
+                            fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                            raw_data=str({"model": mn, "temp": tmp, "ensemble": True})
+                        ))
+                try:
+                    db_session.commit()
+                    logger.info("Ensemble persisted for %d markets, coords=(%s, %s)", len(market_ids), latitude, longitude)
+                except Exception as e:
+                    db_session.rollback()
+                    logger.error("Failed to persist ensemble: %s", e)
 
-                return {
-                    "weighted_mean": weighted_mean,
-                    "weighted_std": weighted_std,
-                    "model_count": len(model_temps),
-                    "model_temps": model_temps,
-                    "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
-                }
+            return {
+                "weighted_mean": weighted_mean,
+                "weighted_std": weighted_std,
+                "model_count": len(model_temps),
+                "model_temps": model_temps,
+                "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
+            }
         except Exception as e:
             logger.error("get_multi_model_forecast error: %s", e)
             return None

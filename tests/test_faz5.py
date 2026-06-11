@@ -5,7 +5,7 @@ Faz 5 tests: end-to-end place bets pipeline (mock).
 import json
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 # --- Override DB path BEFORE any project import ---
 _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
@@ -49,8 +49,8 @@ def _setup_market_and_forecasts():
             question="Will NYC temp exceed 30C on June 10?",
             city="New York", city_code="KLGA",
             metric="temperature_max", threshold=30.0,
-            target_date=datetime(2026, 6, 10, 23, 59, 59),
-            yes_price=0.30, no_price=0.70, status="open",
+    target_date=datetime.now(timezone.utc) + timedelta(days=1),
+    yes_price=0.30, no_price=0.70, status="open",
             latitude=40.7128, longitude=-74.0060,
         )
         session.add(market)
@@ -62,9 +62,9 @@ def _setup_market_and_forecasts():
             wf = WeatherForecast(
                 market_id="test-faz5-nyc", city="New York",
                 lat=40.7128, lon=-74.0060,
-                target_date=datetime(2026, 6, 10, 23, 59, 59),
+                target_date=datetime.now(timezone.utc) + timedelta(days=1),
                 metric="temperature_max", source=source,
-                predicted_value=temp, fetched_at=datetime.now(),
+                predicted_value=temp, fetched_at=datetime.now(timezone.utc),
             )
             session.add(wf)
         session.commit()

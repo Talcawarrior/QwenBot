@@ -21,7 +21,7 @@ from engine.strategy import RiskManager, BettingEngine, SIALoop
 from engine.calculator import WeatherEngine
 from executor.settler import SettlementEngine
 from scrapers.polymarket import PolymarketScraper
-from utils.price_sanity import is_valid_binary_price, safe_ev
+from utils.price_sanity import safe_ev
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -101,7 +101,7 @@ app = FastAPI(title="PolyMarket Ultimate Weather Bot", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:8091", "http://127.0.0.1:8091"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
@@ -188,8 +188,7 @@ async def get_status():
             "locked": state.locked,
             "portfolio": {
                 "initial": initial_capital,
-                # USER FIX: Portfolio value is strictly Capital - Open Stakes (Remaining Cash)
-                "current": float(portfolio.cash_balance) if portfolio else initial_capital,
+                "current": float(portfolio.total_value) if portfolio else initial_capital,
                 "daily_pnl": daily_pnl,
                 "daily_roi": daily_roi,
                 "unrealized_pnl": float(unrealized_pnl_db),
@@ -341,7 +340,7 @@ async def get_signals():
                     origin = db.query(Analysis).filter(Analysis.id == bet.analysis_id).first()
                     if origin: entry_edge = float(origin.edge)
                 if entry and current and entry > 0: move_pct = (current - entry) / entry
-            except: pass
+            except Exception: pass
             signals.append({
                 "id": bet.id, "market_id": bet.market_id, "city": bet.city or (market.city if market else "Unknown"),
                 "outcome": bet.side or bet.outcome or "YES", "entry_price": entry, "current_price": current,

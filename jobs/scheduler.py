@@ -139,8 +139,8 @@ def run_update_prices():
                                 trigger_price = float(rung.get("price", 0))
                                 rung_size = float(rung.get("size", rung.get("amount", 0)))
                                 if bet.side and bet.side.upper() == "NO":
-                                    # NO side: bet price rises as yes_price falls
-                                    should_fill = (1.0 - current) <= (1.0 - trigger_price)
+                                    # NO side: fill when current NO price (1 - yes_price) <= trigger_price
+                                    should_fill = (1.0 - current) <= trigger_price
                                 else:
                                     should_fill = current <= trigger_price
                                 if should_fill and rung_size > 0:

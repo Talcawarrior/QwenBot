@@ -5,11 +5,9 @@ from scrapers.polymarket import PolymarketScraper
 
 
 class LocationMatcher:
-    """Matches markets with coordinates and city information."""
+    """Matches markets with coordinates and city information (lightweight, no scraper init)."""
 
-    def __init__(self):
-        self.scraper = PolymarketScraper()
-
-    def get_coordinates(self, city_code: str) -> Optional[tuple]:
+    @staticmethod
+    def get_coordinates(city_code: str) -> Optional[tuple]:
         """Get lat/lon coordinates from city code."""
-        return self.scraper.get_city_coords(city_code)
+        return PolymarketScraper.get_city_coords(city_code)

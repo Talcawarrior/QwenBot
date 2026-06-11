@@ -6,10 +6,10 @@ import os
 
 def test_load_returns_none_when_file_missing(tmp_path, monkeypatch):
     """A missing file must not raise -- callers fall back to in-memory defaults."""
-    # Point _DEFAULT_PATH at a non-existent file in tmp.
+    # Point _WEIGHTS_PATH at a non-existent file in tmp.
     import utils.weights_store as ws
 
-    monkeypatch.setattr(ws, "_DEFAULT_PATH", str(tmp_path / "absent.json"))
+    monkeypatch.setattr(ws, "_WEIGHTS_PATH", str(tmp_path / "absent.json"))
     assert ws.load_weights() is None
 
 
@@ -18,7 +18,7 @@ def test_save_then_load_round_trip(tmp_path, monkeypatch):
     import utils.weights_store as ws
 
     path = str(tmp_path / "model_weights.json")
-    monkeypatch.setattr(ws, "_DEFAULT_PATH", path)
+    monkeypatch.setattr(ws, "_WEIGHTS_PATH", path)
 
     weights = {"a": 0.5, "b": 0.3, "c": 0.2}
     assert ws.save_weights(weights) is True
@@ -31,7 +31,7 @@ def test_save_below_threshold_is_skipped(tmp_path, monkeypatch):
     import utils.weights_store as ws
 
     path = str(tmp_path / "model_weights.json")
-    monkeypatch.setattr(ws, "_DEFAULT_PATH", path)
+    monkeypatch.setattr(ws, "_WEIGHTS_PATH", path)
 
     weights = {"a": 0.5, "b": 0.5}
     ws.save_weights(weights)
@@ -55,7 +55,7 @@ def test_sialoop_loads_persisted_weights_on_init(tmp_path, monkeypatch):
     import utils.weights_store as ws
 
     path = str(tmp_path / "model_weights.json")
-    monkeypatch.setattr(ws, "_DEFAULT_PATH", path)
+    monkeypatch.setattr(ws, "_WEIGHTS_PATH", path)
 
     # Pre-populate: override one model, leave others at default.
     ws.save_weights({"gfs_seamless": 0.42, "ecmwf_ifs04": 0.99})
@@ -80,5 +80,5 @@ def test_corrupt_json_returns_none(tmp_path, monkeypatch):
     path = str(tmp_path / "model_weights.json")
     with open(path, "w", encoding="utf-8") as f:
         f.write("{not valid json")
-    monkeypatch.setattr(ws, "_DEFAULT_PATH", path)
+    monkeypatch.setattr(ws, "_WEIGHTS_PATH", path)
     assert ws.load_weights() is None

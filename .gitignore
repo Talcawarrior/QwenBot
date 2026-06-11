@@ -13,3 +13,4 @@ Thumbs.db
 *.swp
 uploads/
 data/strategy_params.json
+.env

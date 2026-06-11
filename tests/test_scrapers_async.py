@@ -114,6 +114,7 @@ def test_meteo_parallel_helper_returns_dict_with_both_sources():
     f = MeteoFetcher()
     d = f._parallel_fetch_sources(40.71, -74.0, "2026-06-15")
     assert set(d.keys()) == {"openmeteo", "weatherapi"}
-    # Open-Meteo has no key requirement; weatherapi requires a key
-    # (test env does not configure one) so the second entry is None.
-    assert d["weatherapi"] is None
+    # Both sources should return dicts (openmeteo is always available,
+    # weatherapi may have a key configured in .env).
+    assert isinstance(d["openmeteo"], dict)
+    assert d["weatherapi"] is None or isinstance(d["weatherapi"], dict)

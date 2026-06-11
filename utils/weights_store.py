@@ -46,7 +46,7 @@ def load_strategy_params() -> Optional[Dict[str, float]]:
     try:
         with open(_STRATEGY_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
-    except:
+    except Exception:
         return None
 
 

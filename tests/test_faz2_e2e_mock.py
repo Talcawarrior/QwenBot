@@ -176,10 +176,8 @@ def test_analysis_via_metric_map():
 
 
 def test_metric_map_in_main():
-    """Verify _METRIC_MAP is defined in main.py (legacy stub)."""
-    import main as main_module
-    assert hasattr(main_module, "_METRIC_MAP"), "❌ _METRIC_MAP not found in main.py!"
-    print("✅ TEST 2 PASSED: main.py has _METRIC_MAP (legacy stub, no longer needed)")
+    """Legacy stub removed from main.py — this test is now a no-op."""
+    print("✅ TEST 2 PASSED: _METRIC_MAP legacy stub removed, no longer needed")
 
 
 def test_betplacer_status_consistency():

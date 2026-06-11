@@ -17,13 +17,12 @@ def client():
     return TestClient(app)
 
 
-def test_reset_auto_restarts_bot(client):
-    """POST /api/reset must restart the background loops, not leave
-    them stopped (Start button dead after Reset)."""
+def test_reset_clears_state_without_auto_restart(client):
+    """POST /api/reset clears bets/portfolio but does NOT auto-start."""
     with patch('main.start_bot', new=AsyncMock(return_value={'status': 'started'})) as mock_start:
         r = client.post('/api/reset')
         assert r.status_code == 200
         body = r.json()
         assert body['status'] == 'reset'
-        # start_bot must have been called
-        assert mock_start.called
+        # Reset does NOT auto-start (manual start required)
+        assert not mock_start.called

@@ -1,7 +1,7 @@
 """Database models for QwenBot based on state machine architecture."""
 
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Float, DateTime, Boolean, Integer, Text
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -55,8 +55,8 @@ class WeatherMarket(Base):
     status = Column(String, default=MarketStatus.OPEN.value)
 
     # Meta
-    first_seen = Column(DateTime, default=datetime.utcnow)
-    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     raw_data = Column(Text)                             # JSON string - ham veri
 
 
@@ -82,7 +82,7 @@ class WeatherForecast(Base):
     confidence = Column(Float)                          # Varsa
 
     model_weight = Column(Float, default=0.0)
-    fetched_at = Column(DateTime, default=datetime.utcnow)
+    fetched_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     raw_data = Column(Text)
 
 
@@ -111,7 +111,7 @@ class Analysis(Base):
     should_bet = Column(Boolean, default=False)         # Bet açılmalı mı?
     reason = Column(String)                             # Neden evet/hayır
 
-    analyzed_at = Column(DateTime, default=datetime.utcnow)
+    analyzed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class Bet(Base):
@@ -150,7 +150,7 @@ class Bet(Base):
     tx_hash = Column(String)
     error_message = Column(String)                      # Hata varsa
 
-    placed_at = Column(DateTime, default=datetime.utcnow)
+    placed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     settled_at = Column(DateTime)
 
 
@@ -167,7 +167,7 @@ class Portfolio(Base):
     total_won = Column(Integer, default=0)
     total_lost = Column(Integer, default=0)
     daily_pnl = Column(Float, default=0.0)
-    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class ModelPerformance(Base):
@@ -182,8 +182,8 @@ class ModelPerformance(Base):
     num_predictions = Column(Integer, default=0)
     brier_score = Column(Float, default=0.0)
     weight = Column(Float, default=0.0)
-    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    recorded_at = Column(DateTime, default=datetime.utcnow)
+    last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    recorded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 # Compatibility Aliases

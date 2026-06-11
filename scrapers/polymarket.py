@@ -343,7 +343,8 @@ class PolymarketScraper:
             logger.info(f"{saved} market kaydedildi/güncellendi")
         return saved
 
-    def get_city_coords(self, city_code: str) -> Optional[tuple]:
+    @staticmethod
+    def get_city_coords(city_code: str) -> Optional[tuple]:
         """ICAO kodundan koordinat bul."""
         coords_map = {
             "KDAL": (32.8471, -96.8517),

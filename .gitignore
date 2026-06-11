@@ -12,3 +12,4 @@ Thumbs.db
 .vscode/
 *.swp
 uploads/
+data/strategy_params.json

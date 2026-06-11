@@ -148,8 +148,10 @@ class MeteoFetcher:
                 time.sleep(30)
                 return None
             resp.raise_for_status()
+            data = resp.json()
         except requests.RequestException:
-        data = resp.json()
+            _cache_set(cache_key, None)
+            raise
 
         daily = data.get("daily", {})
         if daily.get("temperature_2m_max"):

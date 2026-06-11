@@ -22,6 +22,7 @@
         .controls { display: flex; gap: 10px; margin-bottom: 20px; }
         button { padding: 10px 20px; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
         button:hover { transform: translateY(-2px); }
+        .header-controls button { padding: 6px 12px; font-size: 12px; }
         .btn-start { background: #22c55e; color: white; }
         .btn-stop { background: #ef4444; color: white; }
         .btn-reset { background: #64748b; color: white; }
@@ -40,6 +41,14 @@
         .card-value { font-size: 28px; font-weight: 700; margin-top: 8px; }
         .card-value.positive { color: #22c55e; }
         .card-value.negative { color: #ef4444; }
+
+        /* Compact portfolio metrics - 2 rows x 4 cols */
+        .card-grid-compact { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
+        .card-compact { background: #1e293b; padding: 8px 10px; border-radius: 8px; border: 1px solid #334155; text-align: center; }
+        .card-compact .card-title { font-size: 9px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.3px; }
+        .card-compact .card-value { font-size: 18px; font-weight: 700; margin-top: 2px; }
+        .card-compact .card-value.positive { color: #22c55e; }
+        .card-compact .card-value.negative { color: #ef4444; }
         
         /* Tables */
         table { width: 100%; border-collapse: collapse; background: #1e293b; border-radius: 12px; overflow: hidden; }
@@ -77,74 +86,71 @@
 <body>
     <div class="container">
         <!-- Header -->
-        <header>
-            <h1>🤖 PolyMarket Ultimate Weather Bot <span id="statusBadge" class="status-badge status-stopped">STOPPED</span></h1>
-            <p style="margin-top: 8px; opacity: 0.9;">v4.0 - 8+ Model Ensemble • DEB Consensus • Fractional Kelly</p>
+        <header style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h1>🤖 PolyMarket Ultimate Weather Bot <span id="statusBadge" class="status-badge status-stopped">STOPPED</span></h1>
+                <p style="margin-top: 8px; opacity: 0.9;">v4.0 - 8+ Model Ensemble • DEB Consensus • Fractional Kelly</p>
+            </div>
+            <div class="controls header-controls" style="margin-bottom: 0;">
+                <button class="btn-start" onclick="startBot()">▶️ Başlat</button>
+                <button class="btn-stop" onclick="stopBot()">⏹️ Durdur</button>
+                <button class="btn-reset" onclick="resetBot()">🔄 Sıfırla</button>
+            </div>
         </header>
         
-        <!-- Controls -->
-        <div class="controls">
-            <button class="btn-start" onclick="startBot()">▶️ Başlat</button>
-            <button class="btn-stop" onclick="stopBot()">⏹️ Durdur</button>
-            <button class="btn-reset" onclick="resetBot()">🔄 Sıfırla</button>
-        </div>
-        
-        <!-- Portfolio Stats -->
-        <div class="card-grid">
-            <div class="card">
-                <div class="card-title">Net Sermaye (Cash)</div>
+        <!-- Portfolio Stats - 2 rows x 4 cols -->
+        <div class="card-grid-compact">
+            <div class="card-compact">
+                <div class="card-title">Net Sermaye</div>
                 <div class="card-value" id="portfolioValue">$1,000.00</div>
             </div>
-            <div class="card">
-                <div class="card-title">Açık Bahis Sayısı</div>
+            <div class="card-compact">
+                <div class="card-title">Açık Bahis</div>
                 <div class="card-value" id="openBetsCount" style="color: #667eea;">0</div>
             </div>
-            <div class="card">
-                <div class="card-title">Açık PnL (Unrealized)</div>
+            <div class="card-compact">
+                <div class="card-title">Açık PnL</div>
                 <div class="card-value" id="unrealizedPnl">$0.00</div>
             </div>
-            <div class="card">
-                <div class="card-title">Kapalı PnL (Realized)</div>
+            <div class="card-compact">
+                <div class="card-title">Kapalı PnL</div>
                 <div class="card-value" id="realizedPnl">$0.00</div>
             </div>
-            <div class="card">
-                <div class="card-title">Toplam PnL (Net)</div>
+            <div class="card-compact">
+                <div class="card-title">Toplam PnL</div>
                 <div class="card-value" id="totalPnl">$0.00</div>
             </div>
-            <div class="card">
-                <div class="card-title">Toplam ROI</div>
-                <div class="card-value" id="totalRoi">%0.00</div>
+            <div class="card-compact">
+                <div class="card-title">Toplam ROI (Kapalı)</div>
+                <div class="card-value" id="closedRoi">%0.00</div>
             </div>
-            <div class="card">
-                <div class="card-title">Kazanan / Kaybeden</div>
-                <div class="card-value" id="winLossRatio" style="font-size: 18px;">0 / 0</div>
+            <div class="card-compact">
+                <div class="card-title">Günlük ROI</div>
+                <div class="card-value" id="dailyRoi">%0.00</div>
             </div>
-            <div class="card">
-                <div class="card-title">Kullanılan Teminat</div>
+            <div class="card-compact">
+                <div class="card-title">Açık Bet USD</div>
                 <div class="card-value" id="exposure">$0.00</div>
             </div>
         </div>
         
-        <!-- Risk Limits -->
-        <div class="card" style="margin-bottom: 20px;">
-            <h3 style="margin-bottom: 15px;">🛡️ Risk Limitleri</h3>
-            <div class="card-grid">
-                <div>
-                    <div class="card-title">Max Bahis</div>
-                    <div class="card-value" style="font-size: 18px;" id="maxBet">%3</div>
-                </div>
-                <div>
-                    <div class="card-title">Max Exposure</div>
-                    <div class="card-value" style="font-size: 18px;" id="maxExposure">%25</div>
-                </div>
-                <div>
-                    <div class="card-title">Daily Stop-Loss</div>
-                    <div class="card-value" style="font-size: 18px;" id="dailyStop">%5</div>
-                </div>
-                <div>
-                    <div class="card-title">City Cap</div>
-                    <div class="card-value" style="font-size: 18px;" id="cityCap">4</div>
-                </div>
+        <!-- Risk Limits - Compact -->
+        <div class="card-grid-compact">
+            <div class="card-compact">
+                <div class="card-title">Max Bahis</div>
+                <div class="card-value" style="font-size: 18px;" id="maxBet">%3</div>
+            </div>
+            <div class="card-compact">
+                <div class="card-title">Max Exposure</div>
+                <div class="card-value" style="font-size: 18px;" id="maxExposure">%25</div>
+            </div>
+            <div class="card-compact">
+                <div class="card-title">Daily Stop-Loss</div>
+                <div class="card-value" style="font-size: 18px;" id="dailyStop">%5</div>
+            </div>
+            <div class="card-compact">
+                <div class="card-title">City Cap</div>
+                <div class="card-value" style="font-size: 18px;" id="cityCap">4</div>
             </div>
         </div>
         
@@ -340,7 +346,10 @@
                     badge.textContent = 'STOPPED';
                 }
                 
-                document.getElementById('portfolioValue').textContent = `$${data.portfolio.current.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                // Net Sermaye = initial - exposure (kullanilabilir nakit)
+                const netCapital = data.portfolio.initial - data.portfolio.exposure;
+                document.getElementById('portfolioValue').textContent = `$${netCapital.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                document.getElementById('portfolioValue').className = `card-value ${netCapital >= 0 ? '' : 'negative'}`;
                 document.getElementById('openBetsCount').textContent = data.stats.total_bets;
                 
                 const realizedPnlEl = document.getElementById('realizedPnl');
@@ -355,15 +364,19 @@
                 totalEl.textContent = `$${data.portfolio.total_pnl.toFixed(2)}`;
                 totalEl.className = `card-value ${data.portfolio.total_pnl >= 0 ? 'positive' : 'negative'}`;
 
-                const dailyRoiEl = document.getElementById('dailyRoi');
-                dailyRoiEl.textContent = `%${data.portfolio.daily_roi.toFixed(2)}`;
-                dailyRoiEl.className = `card-value ${data.portfolio.daily_roi >= 0 ? 'positive' : 'negative'}`;
 
-                const totalRoiEl = document.getElementById('totalRoi');
-                totalRoiEl.textContent = `%${data.portfolio.total_roi.toFixed(2)}`;
-                totalRoiEl.className = `card-value ${data.portfolio.total_roi >= 0 ? 'positive' : 'negative'}`;
 
-                document.getElementById('winLossRatio').textContent = `${data.stats.win_count} / ${data.stats.loss_count}`;
+                // Toplam ROI = sadece kapanmis betler (realized_pnl / initial)
+                const closedRoiVal = (data.portfolio.realized_pnl / data.portfolio.initial) * 100;
+                const closedRoiEl = document.getElementById('closedRoi');
+                if (closedRoiEl) {
+                    closedRoiEl.textContent = `%${closedRoiVal.toFixed(2)}`;
+                    closedRoiEl.className = `card-value ${closedRoiVal >= 0 ? 'positive' : 'negative'}`;
+                }
+                // Gunluk ROI = bugun kapanan betlerin ROI'si
+
+
+
                 document.getElementById('exposure').textContent = `$${data.portfolio.exposure.toFixed(2)}`;
 
                 // Total signals / bets counters. These used to update only

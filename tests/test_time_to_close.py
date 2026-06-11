@@ -62,7 +62,7 @@ def test_no_resolution_attribute_returns_min_edge():
 
 def test_naive_datetime_treated_as_utc():
     m = SimpleNamespace(
-        resolution_date=datetime.utcnow() + timedelta(hours=48)  # no tzinfo
+        resolution_date=datetime.now(timezone.utc) + timedelta(hours=48)  # no tzinfo
     )
     assert WeatherEngine._compute_effective_min_edge(m) == bot_config.strategy.min_edge
 

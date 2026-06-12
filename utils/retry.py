@@ -1,7 +1,7 @@
 """Retry utility decorator for resilient API calls."""
 
-import time
 import logging
+import time
 from functools import wraps
 
 logger = logging.getLogger(__name__)

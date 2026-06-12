@@ -1,20 +1,22 @@
 """Meteo forecast scraper module querying Open-Meteo and WeatherAPI."""
 
 import logging
-import requests
 import threading
 import time
 from datetime import datetime, timezone
+
+import requests
+
+from config.settings import bot_config, config
 from database.db import get_session
-from database.models import WeatherMarket, WeatherForecast
-from config.settings import config, bot_config
+from database.models import WeatherForecast, WeatherMarket
 from scrapers.async_client import AsyncHttpClient
 from utils.retry import retry
 
 logger = logging.getLogger("SCRAPER_METEO")
 
 
-# Module-level in-process cache for (lat, lon, target_date, source) â result
+# Module-level in-process cache for (lat, lon, target_date, source) → result
 # Avoids hammering the upstream APIs when many markets share the same
 # (city, target_date) tuple (e.g., 11 Polymarket threshold markets for
 # "London 2026-06-08" all need the same Open-Meteo forecast).
@@ -60,7 +62,7 @@ def _cache_clear() -> None:
 # limits. Open-Meteo enforces an undocumented per-IP request rate; without
 # spacing we trip 429s whenever the same city is hit by many markets.
 # 3s interval is very safe for grouped requests.
-_MIN_INTERVAL_S = 3.0  
+_MIN_INTERVAL_S = 3.0
 _LAST_CALL_AT: dict[str, float] = {}
 _THROTTLE_LOCK = threading.Lock()
 
@@ -89,30 +91,6 @@ class MeteoFetcher:
         if client is not None and hasattr(client, "aclose"):
             await client.aclose()
 
-    CITY_COORDS = {
-        "new york": (40.7128, -74.0060),
-        "los angeles": (34.0522, -118.2437),
-        "chicago": (41.8781, -87.6298),
-        "miami": (25.7617, -80.1918),
-        "london": (51.5074, -0.1278),
-        "phoenix": (33.4484, -112.0740),
-        "dallas": (32.8471, -96.8517),
-        "ankara": (39.9891, 32.8236),
-        "istanbul": (41.2753, 28.7519),
-        "izmir": (38.2924, 27.1569),
-        "antalya": (36.8987, 30.8005),
-        "tokyo": (35.5533, 139.7811),
-        "jinan": (36.8572, 116.2169),
-        "zhengzhou": (34.5197, 113.8408),
-        "taipei": (25.0330, 121.5654),
-        "singapore": (1.3521, 103.8198),
-        "munich": (48.1351, 11.5820),
-        "toronto": (43.6532, -79.3832),
-        "san francisco": (37.7749, -122.4194),
-        "buenos aires": (-34.6037, -58.3816),
-        "tel aviv": (32.0853, 34.7818),
-    }
-
     @retry(max_attempts=3, delay=3, exceptions=(requests.RequestException,))
     def _fetch_open_meteo(self, lat: float, lon: float, target_date: str) -> dict | None:
         """Open-Meteo API (Ã¼cretsiz, key gerekmez).
@@ -120,7 +98,7 @@ class MeteoFetcher:
         Results are cached in-process keyed by (lat, lon, date, source) so
         that many markets sharing the same city/date do not re-issue the
         upstream request. Cached "None" results are also remembered for a
-        short window â the bot would otherwise re-fail-and-retry the same
+        short window — the bot would otherwise re-fail-and-retry the same
         429-prone request once per market.
         """
         cache_key = (round(lat, 4), round(lon, 4), target_date, "openmeteo")
@@ -208,18 +186,19 @@ class MeteoFetcher:
         return None
 
     def fetch_for_markets(self, market_ids: list[str], city: str, target_date: datetime, metric: str) -> int:
-        """Fetch weather data for a group of markets sharing the same city/date/metric."""
+        """Fetch weather data for a group of markets sharing the same city/date/metric.
+
+        Coordinate resolution: city name → CITY_ICAO_MAP → ICAO_COORDS.
+        """
         city_lower = city.lower()
-        coords = self.CITY_COORDS.get(city_lower)
+        icao = None
+        for alias, code in config.CITY_ICAO_MAP.items():
+            if alias in city_lower:
+                icao = code
+                break
+        coords = config.ICAO_COORDS.get(icao) if icao else None
         if not coords:
-            # Fallback coordinate lookup
-            for alias, ICAO in config.CITY_ICAO_MAP.items():
-                if alias in city_lower:
-                    from scrapers.polymarket import PolymarketScraper
-                    coords = PolymarketScraper().get_city_coords(ICAO)
-                    break
-        if not coords:
-            logger.warning(f"Åehir koordinatlarÄ± bulunamadÄ±: {city}")
+            logger.warning(f"Coordinate not found: {city}")
             return 0
 
         lat, lon = coords
@@ -265,9 +244,10 @@ class MeteoFetcher:
 
     def fetch_all_markets(self) -> int:
         """Fetch ensemble forecast for all open markets with deduplication."""
-        from engine.calculator import WeatherEngine
         import asyncio
         from collections import defaultdict
+
+        from engine.calculator import WeatherEngine
 
         with get_session() as session:
             open_markets = (
@@ -282,13 +262,13 @@ class MeteoFetcher:
                 )
                 .all()
             )
-            
+
             # Group markets by (lat, lon, target_date)
             # We fetch both MAX and MIN in one call, so grouping by date is enough.
             # bucket[key] = list of (market_id, metric)
             groups = defaultdict(list)
             group_info = {} # key -> (city, city_code, target_date, lat, lon)
-            
+
             for m in open_markets:
                 key = (
                     round(m.latitude or 0.0, 4),
@@ -298,10 +278,10 @@ class MeteoFetcher:
                 groups[key].append((m.id, m.metric or "temperature_max"))
                 if key not in group_info:
                     group_info[key] = (
-                        m.city or "", 
-                        m.city_code or "", 
-                        m.target_date, 
-                        m.latitude or 0.0, 
+                        m.city or "",
+                        m.city_code or "",
+                        m.target_date,
+                        m.latitude or 0.0,
                         m.longitude or 0.0
                     )
 
@@ -309,11 +289,11 @@ class MeteoFetcher:
         we = WeatherEngine(db_session_factory=get_session)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
+
         try:
             for key, markets in groups.items():
                 city, city_code, target_date, lat, lon = group_info[key]
-                
+
                 # Separate markets by metric within the city/date group
                 mids_by_metric = defaultdict(list)
                 for mid, metric in markets:
@@ -323,7 +303,7 @@ class MeteoFetcher:
                     # For each metric type (max/min), we want to ensure data is persisted.
                     # WeatherEngine fetches both in one HTTP call, but currently persists one.
                     # Optimization: We'll call it for each unique metric in the group.
-                    # Because _FETCH_CACHE isn't in WeatherEngine, we still rely on 
+                    # Because _FETCH_CACHE isn't in WeatherEngine, we still rely on
                     # grouping here to reduce redundant market-level work.
                     for metric, mids in mids_by_metric.items():
                         # 1. Try Ensemble (8-model)

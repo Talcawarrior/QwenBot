@@ -1,6 +1,7 @@
 ﻿"""Tests for the auto-restart-after-reset UX fix."""
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 # Match the pattern used by tests/test_api_integration.py: the FastAPI
 # TestClient depends on httpx (or the new httpx2 fork), which isn't in

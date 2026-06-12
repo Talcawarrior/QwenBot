@@ -3,7 +3,6 @@
 import os
 
 
-
 def test_load_returns_none_when_file_missing(tmp_path, monkeypatch):
     """A missing file must not raise -- callers fall back to in-memory defaults."""
     # Point _WEIGHTS_PATH at a non-existent file in tmp.
@@ -62,6 +61,7 @@ def test_sialoop_loads_persisted_weights_on_init(tmp_path, monkeypatch):
 
     # Reset the import cache so SIALoop re-evaluates load_weights().
     import importlib
+
     import engine.strategy as strategy_mod
     importlib.reload(strategy_mod)
 

@@ -4,10 +4,10 @@ against a running server at http://127.0.0.1:8091.
 Exit 0 on PASS, exit 1 on FAIL.
 """
 
-import sys
 import json
-import urllib.request
+import sys
 import urllib.error
+import urllib.request
 
 BASE = "http://127.0.0.1:8091"
 ENDPOINTS = ["/api/status", "/api/signals", "/api/bets", "/api/markets"]

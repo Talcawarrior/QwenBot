@@ -6,8 +6,8 @@ Verifies:
   3. At least 1 market can be parsed (city/date/threshold/metric)
 """
 
-import sys
 import os
+import sys
 
 # Ensure repo root is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,7 +25,7 @@ def test_fetch_markets():
 
 def test_weather_filtered():
     """Step 2: Verify weather-filtered markets exist in DB."""
-    from database.db import init_db, get_db_session
+    from database.db import get_db_session, init_db
     from database.models import WeatherMarket
     init_db()
     with get_db_session() as session:

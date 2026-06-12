@@ -2,7 +2,8 @@
 
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Float, DateTime, Boolean, Integer, Text
+
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
@@ -22,24 +23,39 @@ class BetStatus(enum.Enum):
     """Execution status of a bet."""
     PENDING = "pending"
     PLACED = "placed"
+    ACTIVE = "active"
+    OPEN = "open"
+    CANCELLED = "cancelled"
+    SETTLED = "settled"
     FAILED = "failed"
     WON = "won"
     LOST = "lost"
+
+
+# ── Open bet statuses ────────────────────────────────────────────────────
+# These status values all mean "bet is still active / not yet settled":
+#   "active"  — being monitored by risk management
+#   "open"    — initial state when a bet is created (default)
+#   "placed"  — successfully submitted to exchange
+#   "pending" — submitted but not yet confirmed
+OPEN_BET_STATUSES = ("active", "open", "placed", "pending")
 
 
 class WeatherMarket(Base):
     """Polymarket'ten çekilen açık hava betleri."""
     __tablename__ = "weather_markets"
 
-    id = Column(String, primary_key=True)               # Polymarket market ID or condition ID
-    question = Column(String, nullable=False)           # "Will NYC temp exceed 95°F on July 4?"
+    id = Column(String, primary_key=True)
+    question = Column(String, nullable=False)
 
     # Parse edilmiş bilgiler
     city = Column(String)                               # "New York"
     city_code = Column(String, default="")              # ICAO/city code
     metric = Column(String)                             # "temperature_max"
-    threshold = Column(Float)                           # 95.0
+    threshold = Column(Float)                           # 95.0 (primary threshold, °C)
     threshold_unit = Column(String)                     # "fahrenheit" or "celsius"
+    threshold_low = Column(Float, nullable=True)         # range lower bound (°C), e.g. "88-89°F" → 31.1
+    threshold_high = Column(Float, nullable=True)        # range upper bound (°C), e.g. "88-89°F" → 31.7
     target_date = Column(DateTime)                      # 2025-07-04
     latitude = Column(Float)                            # Latitude
     longitude = Column(Float)                           # Longitude
@@ -56,8 +72,12 @@ class WeatherMarket(Base):
 
     # Meta
     first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-    raw_data = Column(Text)                             # JSON string - ham veri
+    last_updated = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    raw_data = Column(Text)
 
 
 class WeatherForecast(Base):
@@ -111,6 +131,11 @@ class Analysis(Base):
     should_bet = Column(Boolean, default=False)         # Bet açılmalı mı?
     reason = Column(String)                             # Neden evet/hayır
 
+    # Per-model predictions for SIA weight optimization.
+    # JSON: {"model_temps": {"gfs_seamless": 32.5, ...},
+    #        "model_probs": {"gfs_seamless": 0.72, ...}}
+    model_predictions = Column(Text, nullable=True)
+
     analyzed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -138,7 +163,7 @@ class Bet(Base):
     bet_type = Column(String)                           # YES/NO or HIGH/LOW
     side = Column(String)                               # YES/NO/HIGH/LOW
     realized_pnl = Column(Float, default=0.0)
-    status = Column(String, default="open")             # open, won, lost, cancelled, active, settled
+    status = Column(String, default=BetStatus.OPEN.value)
     ladder_data = Column(Text)                          # JSON serialized
     result_data = Column(Text)                          # JSON serialized
 
@@ -152,7 +177,7 @@ class Bet(Base):
 
     placed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     settled_at = Column(DateTime)
-    close_reason = Column(String, nullable=True)   # Early exit nedeni: "stop_loss", "take_profit", "time_decay", "rebalance"
+    close_reason = Column(String, nullable=True)
     closed_at = Column(DateTime, nullable=True)    # Early exit zamanı
 
 
@@ -169,7 +194,11 @@ class Portfolio(Base):
     total_won = Column(Integer, default=0)
     total_lost = Column(Integer, default=0)
     daily_pnl = Column(Float, default=0.0)
-    last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    last_updated = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
 
 class ModelPerformance(Base):
@@ -184,7 +213,11 @@ class ModelPerformance(Base):
     num_predictions = Column(Integer, default=0)
     brier_score = Column(Float, default=0.0)
     weight = Column(Float, default=0.0)
-    last_updated = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    last_updated = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
     recorded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 

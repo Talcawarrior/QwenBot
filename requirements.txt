@@ -40,3 +40,9 @@ pytest-asyncio>=0.21.0
 # Code Quality (Optional)
 ruff>=0.1.0
 
+# py-clob_client intentionally NOT included here.
+# Paper-mode safety: the bot uses DRY_RUN=true (default) and never
+# submits real orders.  Including py-clob-client would risk accidental
+# real-money transactions during development if DRY_RUN is ever unset.
+# If you need live Polymarket trading, install from requirements-live.txt.
+

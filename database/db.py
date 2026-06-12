@@ -1,15 +1,19 @@
 """Database setup with WAL mode and custom transaction sessions."""
 
-import os
 import logging
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
+import os
 from contextlib import contextmanager
+
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.orm import sessionmaker
+
 from config.settings import config
 from database.models import Base
 
 logger = logging.getLogger("DATABASE")
 DB_PATH = config.DB_PATH
+
+_DB_INITIALIZED = False
 
 
 def get_engine():
@@ -41,14 +45,48 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def init_db():
-    """Initialize database tables."""
+    """Initialize database tables and apply migrations. Idempotent."""
+    global _DB_INITIALIZED
+    if _DB_INITIALIZED:
+        return
     Base.metadata.create_all(bind=engine)
+
+    # Migration: add threshold_low / threshold_high columns (nullable, safe for SQLite)
+    _migrate_add_column("weather_markets", "threshold_low", "FLOAT")
+    _migrate_add_column("weather_markets", "threshold_high", "FLOAT")
+    # Migration: add model_predictions column to analyses
+    _migrate_add_column("analyses", "model_predictions", "TEXT")
+    # Migration: add close_reason / closed_at columns to bets (pre-existing model fields)
+    _migrate_add_column("bets", "close_reason", "VARCHAR")
+    _migrate_add_column("bets", "closed_at", "DATETIME")
+
+    _DB_INITIALIZED = True
     logger.info("Database initialized at %s with WAL mode", DB_PATH)
+
+
+def _ensure_db_init():
+    """Lazy-init: call init_db() if it hasn't been called yet."""
+    if not _DB_INITIALIZED:
+        init_db()
+
+
+def _migrate_add_column(table: str, column: str, col_type: str) -> None:
+    """Idempotent ALTER TABLE ADD COLUMN for SQLite."""
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(f"PRAGMA table_info({table})")
+        ).fetchall()
+        existing = [r[1] for r in row]  # column name is at index 1
+        if column not in existing:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+            conn.commit()
+            logger.info("Migration: added column %s.%s (%s)", table, column, col_type)
 
 
 @contextmanager
 def get_session():
     """Her işlem kendi session'ını alır, hata olursa rollback yapar."""
+    _ensure_db_init()
     session = SessionLocal()
     try:
         yield session
@@ -62,11 +100,13 @@ def get_session():
 
 def get_db_session():
     """Fallback compatibility method for legacy code."""
+    _ensure_db_init()
     return SessionLocal()
 
 
 def get_db_session_factory():
     """Fallback compatibility method returning the raw sessionmaker factory."""
+    _ensure_db_init()
     return SessionLocal
 
 

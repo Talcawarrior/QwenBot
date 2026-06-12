@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass
+
 from dotenv import load_dotenv
 
 # Compute repo root (parent of config/)
@@ -49,12 +50,11 @@ class MeteoConfig:
 @dataclass
 class StrategyConfig:
     """Strategy & bankroll metrics."""
-    # Lowered from 0.03 to 0.01 (1%): Polymarket temperature markets
-    # in /public-search almost never produce 3%+ edge because the
-    # market price already discounts the public NWS/Open-Meteo
-    # consensus. 1% is enough to cover bookmaker vig + a thin profit
-    # margin in paper mode. Can be raised back once a private weather
-    # feed (e.g. ECMWF-direct) gives a structural edge.
+    # Polymarket temperature markets in /public-search almost never
+    # produce 5%+ edge because the market price already discounts the
+    # public NWS/Open-Meteo consensus.  5% is enough to cover bookmaker
+    # vig + a thin profit margin in paper mode.  Can be lowered once a
+    # private weather feed (e.g. ECMWF-direct) gives a structural edge.
     min_edge: float = 0.05           # 5% edge minimum (must exceed 2% fee_drag + margin)
     max_bet_amount: float = 30.0    # Maximum $50 per bet
     min_liquidity: float = 0.0      # Liquidity check disabled: Polymarket public-search
@@ -164,6 +164,82 @@ class Config:
     HOST = os.getenv("HOST", "0.0.0.0")
     PORT = int(os.getenv("PORT", "8091"))
 
+    ICAO_COORDS = {
+        # Turkey (4)
+        "LTAC": (39.9891, 32.8236),   # Ankara Esenboğa
+        "LTFM": (41.2753, 28.7519),   # Istanbul Airport
+        "LTBJ": (38.2924, 27.1569),   # Izmir Adnan Menderes
+        "LTAI": (36.8987, 30.8005),   # Antalya
+        # USA (15)
+        "KDAL": (32.8471, -96.8517),  # Dallas Love Field
+        "KMIA": (25.7959, -80.2870),  # Miami
+        "KORD": (41.9742, -87.9073),  # Chicago O'Hare
+        "KLGA": (40.7769, -73.8740),  # New York LaGuardia
+        "KLAX": (33.9416, -118.4085), # Los Angeles
+        "KLAS": (36.0840, -115.1537), # Las Vegas McCarran
+        "KPHX": (33.4343, -112.0080), # Phoenix Sky Harbor
+        "KIAH": (29.9844, -95.3414),  # Houston George Bush
+        "KATL": (33.6407, -84.4277),  # Atlanta Hartsfield
+        "KBOS": (42.3656, -71.0096),  # Boston Logan
+        "KSEA": (47.4502, -122.3088), # Seattle-Tacoma
+        "KDEN": (39.8617, -104.6732), # Denver
+        "KDCA": (38.8521, -77.0377),  # Washington Reagan
+        "KSFO": (37.6188, -122.3750), # San Francisco
+        "KMCO": (28.4294, -81.3089),  # Orlando
+        # Canada / Mexico (5)
+        "CYYZ": (43.6777, -79.6308),  # Toronto Pearson
+        "CYVR": (49.1947, -123.1792), # Vancouver
+        "CYUL": (45.4706, -73.7408),  # Montreal Trudeau
+        "MMMX": (19.4363, -99.0721),  # Mexico City
+        "MMGL": (20.5218, -103.3112), # Guadalajara
+        # South America (5)
+        "SBGR": (-23.4356, -46.4731), # São Paulo Guarulhos
+        "SBGL": (-22.8089, -43.2436), # Rio de Janeiro Galeão
+        "SAEZ": (-34.8222, -58.5358), # Buenos Aires Ezeiza
+        "SCEL": (-33.3930, -70.7858), # Santiago
+        "SPJC": (-12.0219, -77.1143), # Lima Jorge Chávez
+        # Europe (15)
+        "EGLL": (51.4700, -0.4543),   # London Heathrow
+        "LFPG": (49.0099, 2.5479),    # Paris Charles de Gaulle
+        "EDDT": (52.5597, 13.2877),   # Berlin Brandenburg
+        "UUEE": (55.9726, 37.4146),   # Moscow Sheremetyevo
+        "EDDF": (50.0379, 8.5622),    # Frankfurt
+        "EHAM": (52.3105, 4.7683),    # Amsterdam Schiphol
+        "LEMD": (40.4983, -3.5676),   # Madrid Barajas
+        "LIRF": (41.8003, 12.2389),   # Rome Fiumicino
+        "LEBL": (41.2974, 2.0833),    # Barcelona
+        "EDDM": (48.3538, 11.7861),   # Munich
+        "LSZH": (47.4581, 8.5480),    # Zurich
+        "LOWW": (48.1103, 16.5697),   # Vienna
+        "ESSA": (59.6498, 17.9294),   # Stockholm Arlanda
+        "LGAV": (37.9364, 23.9472),   # Athens Eleftherios
+        "LPPT": (38.7750, -9.1354),   # Lisbon
+        # Middle East (3)
+        "OMDB": (25.2532, 55.3657),   # Dubai
+        "LLBG": (32.0114, 34.8867),   # Tel Aviv Ben Gurion
+        "OTHH": (25.2731, 51.6081),   # Doha Hamad
+        # Asia (12)
+        "RJTT": (35.5533, 139.7811),  # Tokyo Haneda
+        "RJOO": (34.7882, 135.4381),  # Osaka Itami
+        "ZSPD": (31.1434, 121.8052),  # Shanghai Pudong
+        "ZBAA": (40.0799, 116.6031),  # Beijing Capital
+        "RKSS": (37.4602, 126.4407),  # Seoul Gimpo
+        "VHHH": (22.3080, 113.9185),  # Hong Kong
+        "RCTP": (25.0764, 121.2338),  # Taipei Taoyuan
+        "WSSS": (1.3592, 103.9894),   # Singapore Changi
+        "VTBS": (13.6926, 100.7501),  # Bangkok Suvarnabhumi
+        "WIII": (-6.1256, 106.6559),  # Jakarta Soekarno-Hatta
+        "VABB": (19.0887, 72.8679),   # Mumbai Chhatrapati
+        "VIDP": (28.5562, 77.1000),   # Delhi Indira Gandhi
+        # Oceania (3)
+        "YSSY": (-33.9399, 151.1753), # Sydney Kingsford Smith
+        "YMML": (-37.6690, 144.8410), # Melbourne Tullamarine
+        "NZAA": (-37.0082, 174.7918), # Auckland
+        # Africa (2)
+        "HECA": (30.1219, 31.4056),   # Cairo
+        "FACT": (-33.9694, 18.5972),  # Cape Town
+    }
+
     CITY_ICAO_MAP = {
         # Turkey (4)
         "ankara": "LTAC",
@@ -243,7 +319,7 @@ class Config:
     OPEN_METEO_BASE = "https://api.open-meteo.com/v1/forecast"
     FEE_DRAG = float(os.getenv("FEE_DRAG", "0.02"))
     # NOTE: minimum-edge threshold is NOT defined on Config on purpose.
-    # The single source of truth is `bot_config.strategy.min_edge` (default 0.01 = 1%).
+    # The single source of truth is `bot_config.strategy.min_edge` (default 0.05 = 5%).
     # `engine.calculator.py` reads from there at lines 179 & 187; the previous
     # `Config.MIN_EDGE = 0.03` constant was dead code (never read anywhere) and
     # caused "which one is canonical?" confusion in code review.
@@ -288,3 +364,33 @@ class Config:
 # Singleton instances
 config = Config()
 bot_config = BotConfig()
+
+
+def assert_config_consistency():
+    """Verify that Config legacy class and StrategyConfig dataclass are in sync.
+
+    Raises RuntimeError with details if any field drifts apart.
+    """
+    _errors = []
+
+    # KELLY_FRACTION vs strategy.kelly_fraction
+    if abs(Config.KELLY_FRACTION - bot_config.strategy.kelly_fraction) > 1e-9:
+        _errors.append(
+            f"Config.KELLY_FRACTION ({Config.KELLY_FRACTION}) != "
+            f"bot_config.strategy.kelly_fraction ({bot_config.strategy.kelly_fraction})"
+        )
+
+    # FEE_DRAG vs strategy.fee_drag
+    if abs(Config.FEE_DRAG - bot_config.strategy.fee_drag) > 1e-9:
+        _errors.append(
+            f"Config.FEE_DRAG ({Config.FEE_DRAG}) != "
+            f"bot_config.strategy.fee_drag ({bot_config.strategy.fee_drag})"
+        )
+
+    if _errors:
+        raise RuntimeError(
+            "Config/Strategy drift detected:\n" + "\n".join(_errors)
+        )
+
+
+assert_config_consistency()

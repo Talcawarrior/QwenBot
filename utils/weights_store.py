@@ -26,7 +26,6 @@ import json
 import logging
 import os
 import threading
-from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -41,16 +40,16 @@ _STRATEGY_PATH = os.path.abspath(
 _lock = threading.Lock()
 
 
-def load_strategy_params() -> Optional[Dict[str, float]]:
+def load_strategy_params() -> dict[str, float] | None:
     """Read strategy parameters from disk."""
     try:
-        with open(_STRATEGY_PATH, "r", encoding="utf-8") as f:
+        with open(_STRATEGY_PATH, encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return None
 
 
-def save_strategy_params(params: Dict[str, float]):
+def save_strategy_params(params: dict[str, float]):
     """Save strategy parameters to disk."""
     with _lock:
         try:
@@ -62,14 +61,14 @@ def save_strategy_params(params: Dict[str, float]):
             logger.warning("Could not save strategy parameters: %s", e)
 
 
-def _normalize(weights: Dict[str, float]) -> Dict[str, float]:
+def _normalize(weights: dict[str, float]) -> dict[str, float]:
     """Return weights as plain floats, dropping unknown keys.
 
     A new model appearing in code but missing from the persisted file
     will still be picked up from the in-memory defaults because the
     caller (SIALoop.__init__) merges this dict over `self.model_weights`.
     """
-    out: Dict[str, float] = {}
+    out: dict[str, float] = {}
     for k, v in weights.items():
         try:
             out[str(k)] = float(v)
@@ -78,7 +77,7 @@ def _normalize(weights: Dict[str, float]) -> Dict[str, float]:
     return out
 
 
-def load_weights(path: Optional[str] = None) -> Optional[Dict[str, float]]:
+def load_weights(path: str | None = None) -> dict[str, float] | None:
     """Read model weights from disk.
 
     Returns the dict on success, or None if the file is missing, empty,
@@ -87,7 +86,7 @@ def load_weights(path: Optional[str] = None) -> Optional[Dict[str, float]]:
     """
     p = path or _WEIGHTS_PATH
     try:
-        with open(p, "r", encoding="utf-8") as f:
+        with open(p, encoding="utf-8") as f:
             raw = json.load(f)
     except FileNotFoundError:
         return None
@@ -101,8 +100,8 @@ def load_weights(path: Optional[str] = None) -> Optional[Dict[str, float]]:
 
 
 def save_weights(
-    weights: Dict[str, float],
-    path: Optional[str] = None,
+    weights: dict[str, float],
+    path: str | None = None,
     *,
     min_change: float = 0.001,
 ) -> bool:

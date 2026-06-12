@@ -1,21 +1,27 @@
 """Tests for Faz 2.5-3.5: Ensemble fix + should_bet filter tightening."""
 import os
 import tempfile
+
 # sys.path.insert(0, r"C:\Users\fdemir\Documents\New project\QwenBot")
 
 _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
 os.close(_db_fd)
-from config.settings import config as _cfg
+from config.settings import config as _cfg  # noqa: E402
+
 _cfg.DB_PATH = _db_path
 
-import importlib
-import database.db
+import importlib  # noqa: E402
+
+import database.db  # noqa: E402
+
 importlib.reload(database.db)
-from database.db import init_db, get_session
+from database.db import get_session, init_db  # noqa: E402
+
 init_db()
 
-from datetime import datetime, timedelta
-from database.models import WeatherMarket, WeatherForecast, Analysis, Portfolio
+from datetime import datetime, timedelta  # noqa: E402
+
+from database.models import Analysis, Portfolio, WeatherForecast, WeatherMarket  # noqa: E402
 
 
 def _clean():

@@ -1,6 +1,7 @@
 [MASTER]
 # Use multiple processes to speed up pylint
 jobs=1
+fail-under=9.0
 
 [MESSAGES CONTROL]
 # Disable too-many-instance-attributes for config/state classes
@@ -10,4 +11,4 @@ disable=
 
 [FORMAT]
 # Maximum number of characters on a single line
-max-line-length=100
+max-line-length=120

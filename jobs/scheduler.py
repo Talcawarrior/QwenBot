@@ -3,9 +3,11 @@
 import json
 import logging
 from datetime import datetime, timezone
+
 from sqlalchemy import func
+
 from database.db import get_session
-from database.models import Bet, WeatherMarket, Portfolio, Analysis
+from database.models import OPEN_BET_STATUSES, Analysis, Bet, Portfolio, WeatherMarket
 
 logger = logging.getLogger("JOBS_SCHEDULER")
 
@@ -80,7 +82,7 @@ def run_update_prices():
            mark it "filled" and debit the rung amount from portfolio cash.
         5. Update Portfolio.total_value = cash + open_exposure + unrealized_pnl.
     """
-    open_statuses = ("active", "open", "placed", "pending")
+    open_statuses = OPEN_BET_STATUSES
     updated = 0
     with get_session() as session:
         bets = (
@@ -128,7 +130,10 @@ def run_update_prices():
 
             total_unrealized += (bet.unrealized_pnl or 0.0)
 
-            # 2. Ladder fill check
+            # 2. Ladder fill check — only status=="pending" rungs fill.
+            # L1 is already "filled" at open (bet_placer), so safe from double-debit.
+            from utils.accounting import debit_stake
+
             if bet.ladder_data:
                 try:
                     ladder = json.loads(bet.ladder_data) if isinstance(bet.ladder_data, str) else bet.ladder_data
@@ -149,13 +154,10 @@ def run_update_prices():
                                     filled_amount += rung_size
                         if filled_amount > 0:
                             bet.ladder_data = json.dumps(ladder)
-                            portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
-                            if portfolio:
-                                portfolio.cash_balance = (portfolio.cash_balance or 0.0) - filled_amount
-                                logger.info(
-                                    "Ladder filled: %s, level amount=%.2f, new cash=%.2f",
-                                    bet.market_id, filled_amount, portfolio.cash_balance
-                                )
+                            debit_stake(
+                                session, filled_amount,
+                                f"ladder_fill:{bet.market_id}"
+                            )
                 except Exception as e:
                     logger.warning("Ladder parse hatası %s: %s", bet.id, e)
 
@@ -173,7 +175,7 @@ def run_update_prices():
             ) or 0.0
             open_exposure = (
                 session.query(func.coalesce(func.sum(Bet.amount), 0.0))
-                .filter(Bet.status.in_(("active", "open", "placed", "pending")))
+                .filter(Bet.status.in_(OPEN_BET_STATUSES))
                 .scalar()
             ) or 0.0
             # Conservative: cash + money locked in bets
@@ -227,13 +229,12 @@ def run_risk_management():
     Her açık bahsi tara, RiskManager.check_early_exit ile kontrol et,
     erken çıkılması gereken pozisyonları kapat.
     """
-    from engine.strategy import RiskManager
     from config.settings import bot_config
+    from engine.strategy import RiskManager
 
     with get_session() as session:
         rm = RiskManager(db_session=session, cfg=bot_config)
-        open_statuses = ("active", "open", "placed", "pending")
-        bets = session.query(Bet).filter(Bet.status.in_(open_statuses)).all()
+        bets = session.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).all()
 
         if not bets:
             return "Risk: no open positions"
@@ -271,10 +272,30 @@ def run_risk_management():
                     should_exit, reason = True, rev_reason
 
             if should_exit:
-                # Close position: mark as closed with loss/profit
+                from utils.accounting import credit_sale
+
+                # Calculate proceeds: for ladder bets, sum ONLY filled rungs
                 entry = float(bet.entry_price or bet.price or 0.0)
                 shares = float(bet.shares or 0.0)
                 realized = round(shares * (current_price - entry), 2)
+                proceeds = round(shares * current_price, 2)  # principal + PnL
+
+                # Ladder: only filled rungs were debited, so only filled
+                # rung shares can be sold.  Pending rungs are cancelled.
+                if bet.ladder_data:
+                    try:
+                        ladder = json.loads(bet.ladder_data) if isinstance(bet.ladder_data, str) else bet.ladder_data
+                        if isinstance(ladder, list):
+                            filled_shares = sum(
+                                float(r.get("shares", r.get("size", r.get("amount", 0))))
+                                for r in ladder
+                                if r.get("status") == "filled"
+                            )
+                            if filled_shares > 0:
+                                proceeds = round(filled_shares * current_price, 2)
+                                realized = round(filled_shares * (current_price - entry), 2)
+                    except Exception:
+                        pass  # fall back to simple calculation
 
                 bet.status = "closed_early"
                 bet.close_reason = reason
@@ -283,21 +304,22 @@ def run_risk_management():
                 bet.pnl = realized
                 bet.current_price = current_price
 
-                # Update portfolio cash
+                # Credit proceeds to cash via central accounting.
+                # After credit_sale, cash_balance already includes proceeds.
+                # total_value = cash_balance (bet is closed, no unrealized PnL).
+                credit_sale(session, proceeds, f"early_exit:{bet.market_id}:{reason}")
+
                 portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
                 if portfolio:
-                    portfolio.cash_balance = (portfolio.cash_balance or 0.0) + realized
-                    portfolio.total_value = round(
-                        (portfolio.cash_balance or 0.0) + float(realized), 2
-                    )
+                    portfolio.total_value = round(portfolio.cash_balance or 0.0, 2)
                     portfolio.last_updated = datetime.now(timezone.utc)
 
                 session.add(bet)
                 session.add(portfolio) if portfolio else None
                 closed_count += 1
                 logger.info(
-                    "Early exit bet=%s market=%s reason=%s realized=$%.2f",
-                    bet.id, bet.market_id, reason, realized,
+                    "Early exit bet=%s market=%s reason=%s realized=$%.2f proceeds=$%.2f",
+                    bet.id, bet.market_id, reason, realized, proceeds,
                 )
 
         session.commit()

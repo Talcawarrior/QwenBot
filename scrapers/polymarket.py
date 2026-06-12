@@ -2,16 +2,18 @@
 
 import json
 import logging
-import requests
 import re
 from datetime import datetime, timezone
-from typing import Optional
+
+import requests
+
+from config.settings import bot_config, config
 from database.db import get_session
 from database.models import WeatherMarket
-from config.settings import config, bot_config
+from engine.market_parser import MarketParser
 from scrapers.async_client import AsyncHttpClient
-from utils.retry import retry
 from utils.errors import ScraperError
+from utils.retry import retry
 
 logger = logging.getLogger("SCRAPER_POLYMARKET")
 
@@ -231,7 +233,11 @@ class PolymarketScraper:
 
         # Parse structured market metadata
         target_date = self._extract_date(title)
-        threshold = self._extract_strike(question)
+        parser = MarketParser()
+        threshold_result = parser._extract_threshold(question)
+        threshold, threshold_unit, threshold_low, threshold_high = (
+            threshold_result if threshold_result else (0.0, "celsius", None, None)
+        )
         metric = (
             "temperature_max"
             if "highest" in question_lower or "above" in question_lower
@@ -258,6 +264,9 @@ class PolymarketScraper:
             "city": city_name,
             "target_date": target_date,
             "threshold": threshold,
+            "threshold_unit": threshold_unit,
+            "threshold_low": threshold_low,
+            "threshold_high": threshold_high,
             "metric": metric,
             "city_code": city_code,
             "market_type": market_type,
@@ -281,6 +290,20 @@ class PolymarketScraper:
                 try:
                     parsed = self._parse_market(raw)
 
+                    # Markets without ICAO coordinates → no_coords status
+                    has_coords = (
+                        parsed["latitude"] != 0.0 or parsed["longitude"] != 0.0
+                    )
+                    if not has_coords and parsed["city_code"]:
+                        logger.warning(
+                            "No coordinates for city=%s (ICAO=%s) market=%s "
+                            "question=%r — status=no_coords",
+                            parsed.get("city_name", "?"),
+                            parsed["city_code"],
+                            parsed["id"],
+                            (parsed.get("question") or "")[:80],
+                        )
+
                     # Upsert
                     existing = session.query(WeatherMarket).filter_by(
                         id=parsed["id"]
@@ -292,11 +315,23 @@ class PolymarketScraper:
                             f"Skipping market {parsed['id']}: no target_date parsed"
                         )
                         continue
-                    if parsed["threshold"] == 0.0:
+                    threshold_c = parsed["threshold"]
+                    if threshold_c == 0.0:
                         logger.warning(
                             f"Skipping market {parsed['id']}: threshold is 0.0"
                         )
                         continue
+                    # Sanity guard: Celsius değer -40..55 aralığında değilse atla
+                    if threshold_c < -40 or threshold_c > 55:
+                        logger.warning(
+                            "Skipping market %s: threshold %.1f°C outside sane "
+                            "range [-40, 55] — question=%r",
+                            parsed["id"], threshold_c,
+                            (parsed.get("question") or "")[:80],
+                        )
+                        continue
+
+                    status = "no_coords" if not has_coords else "open"
 
                     if existing:
                         existing.yes_price = parsed["yes_price"]
@@ -312,6 +347,9 @@ class PolymarketScraper:
                         existing.city_code = parsed["city_code"]
                         existing.latitude = parsed["latitude"]
                         existing.longitude = parsed["longitude"]
+                        existing.status = status
+                        existing.threshold_low = parsed.get("threshold_low")
+                        existing.threshold_high = parsed.get("threshold_high")
                     else:
                         market = WeatherMarket(
                             id=parsed["id"],
@@ -324,9 +362,11 @@ class PolymarketScraper:
                             first_seen=datetime.now(timezone.utc).replace(tzinfo=None),
                             last_updated=datetime.now(timezone.utc).replace(tzinfo=None),
                             raw_data=parsed["raw_data"],
-                            status="open",
+                            status=status,
                             target_date=parsed["target_date"],
                             threshold=parsed["threshold"],
+                            threshold_low=parsed.get("threshold_low"),
+                            threshold_high=parsed.get("threshold_high"),
                             metric=parsed["metric"],
                             city_code=parsed["city_code"],
                             market_type=parsed["market_type"],
@@ -344,50 +384,11 @@ class PolymarketScraper:
         return saved
 
     @staticmethod
-    def get_city_coords(city_code: str) -> Optional[tuple]:
-        """ICAO kodundan koordinat bul."""
-        coords_map = {
-            "KDAL": (32.8471, -96.8517),
-            "KMIA": (25.7959, -80.2870),
-            "KORD": (41.9742, -87.9073),
-            "KLGA": (40.7769, -73.8740),
-            "KLAX": (33.9416, -118.4085),
-            "KLAS": (36.0840, -115.1537),
-            "KPHX": (33.4343, -112.0080),
-            "KIAH": (29.9844, -95.3414),
-            "KATL": (33.6407, -84.4277),
-            "KBOS": (42.3656, -71.0096),
-            "KSEA": (47.4502, -122.3088),
-            "KDEN": (39.8617, -104.6732),
-            "LTAC": (39.9891, 32.8236),
-            "LTFM": (41.2753, 28.7519),
-            "LTBJ": (38.2924, 27.1569),
-            "LTAI": (36.8987, 30.8005),
-            "RJTT": (35.5533, 139.7811),
-            "ZSPD": (31.1434, 121.8052),
-            "ZSJN": (36.8572, 116.2169),
-            "ZHCC": (34.5197, 113.8408),
-            "ZBAA": (40.0799, 116.6031),
-            "RKSS": (37.4602, 126.4407),
-            "VHHH": (22.3080, 113.9185),
-            "EGLL": (51.4700, -0.4543),
-            "LFPG": (49.0099, 2.5479),
-            "EDDT": (52.5597, 13.2877),
-            "UUEE": (55.9726, 37.4146),
-            "YSSY": (-33.9399, 151.1753),
-            "OMDB": (25.2532, 55.3657),
-            "MMMX": (19.4363, -99.0721),
-            "SBGR": (-23.4356, -46.4731),
-            "SBGL": (-22.8089, -43.2436),
-            "EDDF": (50.0379, 8.5622),
-            "EHAM": (52.3105, 4.7683),
-            "LEMD": (40.4983, -3.5676),
-            "LIRF": (41.8003, 12.2389),
-            "LEBL": (41.2974, 2.0833),
-        }
-        return coords_map.get(city_code)
+    def get_city_coords(city_code: str) -> tuple | None:
+        """ICAO kodundan koordinat bul — merkezi Config.ICAO_COORDS."""
+        return config.ICAO_COORDS.get(city_code)
 
-    def _extract_date(self, title: str) -> Optional[datetime]:
+    def _extract_date(self, title: str) -> datetime | None:
         """Parse a date from a market title string.
 
         Tries three patterns in order:

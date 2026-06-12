@@ -1,24 +1,31 @@
-﻿"""Faz 6 tests: settlement engine, PnL calculation, portfolio update."""
+﻿"""Faz 6 tests: settlement engine, PnL calculation, portfolio update.
+
+Mock uses Polymarket Gamma API response format (not weather archive).
+"""
 
 import os
 import tempfile
 from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
 os.close(_db_fd)
 
-from config.settings import config as _cfg
+from config.settings import config as _cfg  # noqa: E402
+
 _cfg.DB_PATH = _db_path
 
-import importlib
-import database.db
-importlib.reload(database.db)
+import importlib  # noqa: E402
 
-from database.db import init_db, get_session
-init_db()
+import database.db  # noqa: E402
 
-from database.models import Bet, WeatherMarket, Portfolio
+importlib.reload(database.db)  # noqa: E402
+
+from database.db import get_session, init_db  # noqa: E402
+
+init_db()  # noqa: E402
+
+from database.models import Bet, Portfolio, WeatherMarket  # noqa: E402
 
 
 def _clean():
@@ -59,25 +66,26 @@ def _setup(market_type="HIGH", yes_price=0.35, threshold=30.0, side="YES"):
     return market, bet, pf
 
 
-def _mock_weather(actual_temp):
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = {
-        "daily": {
-            "temperature_2m_max": [actual_temp],
-            "temperature_2m_min": [actual_temp - 5],
-        }
+def _mock_gamma_outcome(closed=True, status="resolved", outcome_prices=None):
+    """Build mock response in Polymarket Gamma API format."""
+    if outcome_prices is None:
+        outcome_prices = ["1", "0"]
+    mock = MagicMock()
+    mock.json.return_value = {
+        "closed": closed,
+        "umaResolutionStatus": status,
+        "outcomePrices": outcome_prices,
     }
-    mock_resp.raise_for_status = MagicMock()
-    return mock_resp
+    mock.raise_for_status = MagicMock()
+    return mock
 
 
 def test_settle_win_yes():
-    """YES bet wins when actual temp > strike (HIGH market)."""
+    """YES bet wins when Gamma resolves YES."""
     _setup(yes_price=0.35, threshold=30.0, side="YES")
     try:
         with patch("executor.settler.requests.get") as mock_get:
-            mock_get.return_value = _mock_weather(32.0)
+            mock_get.return_value = _mock_gamma_outcome(outcome_prices=["1", "0"])
             from executor.settler import SettlementEngine
             engine = SettlementEngine()
             results = engine.settle_all()
@@ -102,11 +110,11 @@ def test_settle_win_yes():
 
 
 def test_settle_loss_yes():
-    """YES bet loses when actual temp < strike."""
+    """YES bet loses when Gamma resolves NO."""
     _setup(yes_price=0.35, threshold=30.0, side="YES")
     try:
         with patch("executor.settler.requests.get") as mock_get:
-            mock_get.return_value = _mock_weather(28.0)
+            mock_get.return_value = _mock_gamma_outcome(outcome_prices=["0", "1"])
             from executor.settler import SettlementEngine
             engine = SettlementEngine()
             results = engine.settle_all()
@@ -129,11 +137,11 @@ def test_settle_loss_yes():
 
 
 def test_settle_win_no():
-    """NO bet wins when actual temp > strike (NOT low)."""
+    """NO bet wins when Gamma resolves NO."""
     _setup(market_type="LOW", yes_price=0.65, threshold=30.0, side="NO")
     try:
         with patch("executor.settler.requests.get") as mock_get:
-            mock_get.return_value = _mock_weather(35.0)
+            mock_get.return_value = _mock_gamma_outcome(outcome_prices=["0", "1"])
             from executor.settler import SettlementEngine
             engine = SettlementEngine()
             results = engine.settle_all()

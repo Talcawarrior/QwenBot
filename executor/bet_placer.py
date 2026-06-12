@@ -1,13 +1,15 @@
 ﻿"""Bet placement executor making paper or live trades on Polymarket."""
 
 import json
-import os
 import logging
+import os
 from datetime import datetime, timezone
+
 from sqlalchemy import func
+
+from config.settings import Config, bot_config
 from database.db import get_session
-from database.models import Analysis, Bet, WeatherMarket, Portfolio
-from config.settings import bot_config, Config
+from database.models import OPEN_BET_STATUSES, Analysis, Bet, Portfolio, WeatherMarket
 from utils.price_sanity import is_valid_binary_price
 
 logger = logging.getLogger("EXECUTOR_BET_PLACER")
@@ -17,7 +19,7 @@ class BetPlacer:
     """SADECE bet aÃ§ar. Karar vermez - engine karar verir."""
 
     # Statuses that count as "open" for risk/exposure accounting.
-    _OPEN_STATUSES = ("active", "open", "placed", "pending")
+    _OPEN_STATUSES = OPEN_BET_STATUSES
 
     def __init__(self):
         # Lazy-import risk manager to break import cycle:
@@ -227,6 +229,7 @@ class BetPlacer:
             shares = (proposed_amount / fill_price) if fill_price > 0 else 0.0
 
             # Bet objesi oluÅŸtur
+            fair_value = float(analysis.estimated_probability or 0.5)
             bet = Bet(
                 market_id=analysis.market_id,
                 analysis_id=analysis_id,
@@ -239,6 +242,8 @@ class BetPlacer:
                 shares=shares,                  # NEW: needed for unrealized_pnl
                 current_price=fill_price,       # NEW: starts equal to entry, refreshed by run_update_prices
                 status="pending",
+                fair_value=fair_value,
+                expected_value=float(analysis.edge or 0.0),
             )
 
             bet.potential_payout = bet.amount / bet.price if bet.price > 0 else 0
@@ -272,7 +277,9 @@ class BetPlacer:
             _live_allowed = (not Config.DRY_RUN) and os.getenv("LIVE_TRADING_ENABLED", "false").lower() == "true"
             if self.ready and _live_allowed:
                 try:
-                    from py_clob_client.order_builder.constants import BUY  # pylint: disable=import-error,no-name-in-module
+                    from py_clob_client.order_builder.constants import (
+                        BUY,  # pylint: disable=import-error,no-name-in-module
+                    )
 
                     order = self.client.create_and_post_order({
                         "token_id": self._get_token_id(market, analysis.recommended_side),
@@ -297,7 +304,8 @@ class BetPlacer:
             else:
                 # Simulated / Paper trade fallback. Also covers the case
                 # where Config.DRY_RUN is true (defense-in-depth).
-                bet.order_id = f"paper_order_{market.id}_{int(datetime.now(timezone.utc).replace(tzinfo=None).timestamp())}"
+                now_ts = int(datetime.now(timezone.utc).replace(tzinfo=None).timestamp())
+                bet.order_id = f"paper_order_{market.id}_{now_ts}"
                 bet.status = "placed"
                 bet.placed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 market.status = "bet_placed"
@@ -307,17 +315,31 @@ class BetPlacer:
                     f"({shares:.2f} shares)"
                 )
 
-            # Deduct stake from portfolio cash balance.
-            # Only Level 1 (first order) is live stake; pending ladder
-            # levels are not yet deployed.
+            # Deduct stake from portfolio cash — via central accounting API.
+            # Ladder: L1 is filled immediately; L2/L3 stay pending.
+            from utils.accounting import debit_stake
+
             initial_stake = proposed_amount
             if ladder_orders:
                 l1_amount = ladder_orders[0].get("amount") if isinstance(ladder_orders[0], dict) else None
                 if l1_amount and l1_amount > 0:
                     initial_stake = l1_amount
+                    # Mark L1 as filled immediately (prevents double-debit in run_update_prices)
+                    ladder_orders[0]["status"] = "filled"
+                    ladder_orders[0]["filled_at"] = datetime.now(timezone.utc).isoformat()
+                    # Persist updated ladder back to bet.ladder_data
+                    bet.ladder_data = json.dumps(ladder_orders)
+            try:
+                debit_stake(session, initial_stake, f"bet_open:{bet.market_id}")
+            except ValueError as e:
+                logger.error("Cannot open bet %s: %s", bet.market_id, e)
+                bet.status = "failed"
+                bet.error_message = str(e)
+                session.add(bet)
+                session.commit()
+                return bet
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
             if portfolio:
-                portfolio.cash_balance -= initial_stake
                 portfolio.current_value = portfolio.cash_balance  # unrealized PnL added later (Faz 4)
                 portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
             session.add(bet)

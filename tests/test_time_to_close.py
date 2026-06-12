@@ -9,9 +9,8 @@ Validates WeatherEngine._compute_effective_min_edge linear ramp:
 - No resolution date attribute: full min_edge
 - esc_h = 0: avoids divide-by-zero
 """
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-
 
 from config.settings import bot_config
 from engine.calculator import WeatherEngine

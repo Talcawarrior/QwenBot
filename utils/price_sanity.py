@@ -1,6 +1,5 @@
 """Price validation helpers for binary Polymarket markets."""
 
-from typing import Tuple
 
 
 def is_valid_binary_price(yes_price: float, no_price: float) -> bool:
@@ -60,7 +59,7 @@ def safe_ev(model_prob: float, price: float, min_price: float = 0.01) -> float:
     return prob * (1.0 / p - 1.0) - (1.0 - prob)
 
 
-def validate_market_prices(market) -> Tuple[bool, str]:
+def validate_market_prices(market) -> tuple[bool, str]:
     """
     Validate a WeatherMarket object prices.
 
@@ -71,5 +70,8 @@ def validate_market_prices(market) -> Tuple[bool, str]:
     if market.no_price is None:
         return False, "no_price is None"
     if not is_valid_binary_price(market.yes_price, market.no_price):
-        return False, f"invalid prices: yes={market.yes_price}, no={market.no_price}, sum={market.yes_price + market.no_price}"
+        return False, (
+            f"invalid prices: yes={market.yes_price}, no={market.no_price}, "
+            f"sum={market.yes_price + market.no_price}"
+        )
     return True, ""

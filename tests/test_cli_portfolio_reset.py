@@ -3,7 +3,8 @@
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from database.models import Base, Portfolio, Bet
+
+from database.models import OPEN_BET_STATUSES, Base, Bet, Portfolio
 
 
 @pytest.fixture
@@ -16,8 +17,8 @@ def fresh_db(tmp_path):
     session = Session()
 
     # Patch database.db to use our test engine
-    import database.db as db_mod
     import config.settings as settings_mod
+    import database.db as db_mod
     original_engine = db_mod.engine
     original_session_factory = db_mod.SessionLocal
     db_mod.engine = engine
@@ -85,12 +86,12 @@ def test_cli_reset_creates_portfolio_if_missing(fresh_db):
 
     # Simulate CLI reset logic (from main.py lines 859-876)
     from config.settings import config
-    from database.models import Portfolio as PortfolioModel, Analysis as AnalysisModel
+    from database.models import Analysis as AnalysisModel
+    from database.models import Portfolio as PortfolioModel
 
-    open_statuses = ("active", "open", "placed", "pending")
     (
         session.query(Bet)
-        .filter(Bet.status.in_(open_statuses))
+        .filter(Bet.status.in_(OPEN_BET_STATUSES))
         .update({"status": "cancelled"}, synchronize_session=False)
     )
     (

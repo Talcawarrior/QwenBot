@@ -1,33 +1,38 @@
 """Matematiksel olasılık, Kelly kriteri hesaplayıcısı ve WeatherEngine konsensüs birleşimi."""
 
-import math
-import logging
 import asyncio
-from typing import Dict, List, Optional
+import json
+import logging
+import math
 from datetime import datetime, timezone
+
 import aiohttp
-from config.settings import config, bot_config, Config
+
+from config.settings import Config, bot_config, config
 from database.db import get_session
-from database.models import WeatherMarket, WeatherForecast, Analysis, Portfolio
+from database.models import Analysis, Portfolio, WeatherForecast, WeatherMarket
 from utils.price_sanity import is_valid_binary_price
+from utils.probability import compute_effective_min_edge
+from utils.probability import estimate_probability as _estimate_probability
 
 logger = logging.getLogger("ENGINE_CALCULATOR")
-
-try:
-    from scipy.stats import norm
-    HAS_SCIPY = True
-except ImportError:
-    HAS_SCIPY = False
-    logger.warning("scipy not available, using Abramowitz & Stegun approximation for Normal CDF")
 
 
 class Calculator:
     """Calculates forecasting probability, Kelly stake sizes, and analyzes markets."""
 
-    def estimate_probability(self, forecasts: List[float], threshold: float, days_ahead: int) -> float:
-        """
-        Tahmin değerlerinden, eşik aşılma olasılığını hesapla.
-        P(X > threshold) hesapla.
+    def estimate_probability(
+        self,
+        forecasts: list[float],
+        threshold: float,
+        days_ahead: int,
+        market_type: str = "HIGH",
+        range_low: float | None = None,
+        range_high: float | None = None,
+    ) -> float:
+        """Tahmin değerlerinden, market tipine göre YES olasılığını hesapla.
+
+        Delegates to :func:`utils.probability.estimate_probability`.
         """
         if not forecasts:
             return 0.5
@@ -40,19 +45,15 @@ class Calculator:
         else:
             std = 2.0  # Default 2C uncertainty for single source
 
-        uncertainty_per_day = 0.5
-        total_std = math.sqrt(std**2 + (days_ahead * uncertainty_per_day)**2)
-        total_std = max(total_std, 1.0)
-
-        z = (threshold - mean) / total_std
-
-        if HAS_SCIPY:
-            prob_below = norm.cdf(z)
-        else:
-            prob_below = self._normal_cdf(z)
-
-        prob_above = 1.0 - prob_below
-        return max(0.01, min(0.99, prob_above))
+        return _estimate_probability(
+            mean=mean,
+            std=std,
+            threshold=threshold,
+            days_ahead=days_ahead,
+            market_type=market_type,
+            range_low=range_low,
+            range_high=range_high,
+        )
 
     def kelly_criterion(self, prob: float, price: float, fraction: float = 0.15) -> float:
         """Pure f* fraction.
@@ -76,29 +77,6 @@ class Calculator:
         if f_star <= 0:
             return 0.0
         return f_star * fraction
-
-    def _normal_cdf(self, z: float) -> float:
-        """Standard Normal CDF using Abramowitz & Stegun approximation."""
-        if z < -8:
-            return 0.0
-        if z > 8:
-            return 1.0
-
-        b1 = 0.319381530
-        b2 = -0.356563782
-        b3 = 1.781477937
-        b4 = -1.821255978
-        b5 = 1.330274429
-        p = 0.2316419
-
-        if z >= 0:
-            t = 1.0 / (1.0 + p * z)
-            poly = t * (b1 + t * (b2 + t * (b3 + t * (b4 + t * b5))))
-            return 1.0 - (1.0 / (2.0 * math.pi**0.5)) * (math.e ** (-z * z / 2)) * poly
-        
-        t = 1.0 / (1.0 - p * z)
-        poly = t * (b1 + t * (b2 + t * (b3 + t * (b4 + t * b5))))
-        return (1.0 / (2.0 * math.pi**0.5)) * (math.e ** (-z * z / 2)) * poly
 
     def analyze_market(self, market_id: str) -> Analysis | None:
         """Bir marketi analiz et."""
@@ -152,15 +130,59 @@ class Calculator:
                     f"({len(forecast_values)}/{bot_config.strategy.min_sources})"
                 )
 
+            # Compute std early — needed for both consensus and per-model probs
+            if forecast_values and len(forecast_values) > 1:
+                avg = sum(forecast_values) / len(forecast_values)
+                std_val = math.sqrt(
+                    sum((x - avg) ** 2 for x in forecast_values)
+                    / len(forecast_values)
+                )
+            else:
+                std_val = None
+
             # days_ahead: use calendar days (>=0) and treat "today" as 1 day
             # so that (target_date=23:59:59, now=04:21) -> 0 still means "today".
             days_ahead = (market.target_date - datetime.now(timezone.utc).replace(tzinfo=None)).days
             days_ahead_for_check = max(days_ahead, 1)
 
-            # Olasılık hesapla
+            # Olasılık hesapla — market_type-aware
+            # RANGE markets: pass explicit bucket bounds if stored
+            range_low = None
+            range_high = None
+            if (market.market_type or "").upper() == "RANGE":
+                if market.threshold_low is not None and market.threshold_high is not None:
+                    range_low = float(market.threshold_low)
+                    range_high = float(market.threshold_high)
             estimated_prob = self.estimate_probability(
-                forecast_values, market.threshold, days_ahead_for_check
+                forecast_values,
+                threshold=float(market.threshold or 0),
+                days_ahead=days_ahead_for_check,
+                market_type=(market.market_type or "HIGH"),
+                range_low=range_low,
+                range_high=range_high,
             )
+
+            # Per-model probabilities for SIA weight optimization
+            model_temps = {
+                src: float(val)
+                for src, val in latest_by_source.items()
+                if val is not None
+            }
+            total_std = float(std_val) if std_val is not None else 2.0
+            model_probs = {}
+            for mn, mt in model_temps.items():
+                mp = _estimate_probability(
+                    mean=mt,
+                    std=total_std,
+                    threshold=float(market.threshold or 0),
+                    days_ahead=days_ahead_for_check,
+                    market_type=(market.market_type or "HIGH"),
+                )
+                model_probs[mn] = mp
+            model_predictions_json = json.dumps({
+                "model_temps": model_temps,
+                "model_probs": model_probs,
+            })
 
             market_implied = market.yes_price or 0.5
             edge = estimated_prob - market_implied
@@ -234,12 +256,6 @@ class Calculator:
                 reason = "PASS: " + ", ".join(reason_parts)
 
             avg_val = sum(forecast_values) / len(forecast_values) if forecast_values else None
-            std_val = (
-                math.sqrt(
-                    sum((x - avg_val)**2 for x in forecast_values)
-                    / len(forecast_values)
-                ) if forecast_values and len(forecast_values) > 1 else None
-            )
 
             analysis = Analysis(
                 market_id=market_id,
@@ -254,6 +270,7 @@ class Calculator:
                 confidence_score=min(len(forecast_values) / 5, 1.0),
                 should_bet=should_bet,
                 reason=reason,
+                model_predictions=model_predictions_json,
                 analyzed_at=datetime.now(timezone.utc).replace(tzinfo=None),
             )
             session.add(analysis)
@@ -267,47 +284,8 @@ class Calculator:
 
     @staticmethod
     def _compute_effective_min_edge(market) -> float:
-        """Time-to-close-scaled min_edge.
-
-        Linearly ramps from 1x bot_config.strategy.min_edge at
-        edge_escalation_hours before resolution to
-        edge_escalation_multiplier * min_edge at the moment of close.
-        Clamps to the multiplier if we are already past resolution, and
-        never divides by zero.
-
-        Mirrors WeatherEngine._compute_effective_min_edge (kept on
-        WeatherEngine for backward-compat with tests). The single
-        source of truth should eventually move to a module-level
-        function; until then both copies must stay in sync.
-        """
-        s = bot_config.strategy
-        try:
-            resolution = (
-                getattr(market, 'resolution_date', None)
-                or getattr(market, 'target_date', None)
-            )
-            if resolution is None:
-                return s.min_edge
-            now = datetime.now(timezone.utc)
-            if getattr(resolution, 'tzinfo', None) is None:
-                resolution = resolution.replace(tzinfo=timezone.utc)
-            hours_left = (resolution - now).total_seconds() / 3600.0
-        except Exception:
-            return s.min_edge
-
-        # 60s tolerance for the boundary: a market created with
-        # resolution_date=now+esc_h drifts microseconds by the time
-        # the function runs, producing 0.01+1e-9 on CI. A 1-minute
-        # window makes the boundary deterministic.
-        if hours_left >= s.edge_escalation_hours - (60.0 / 3600.0):
-            return s.min_edge
-        if hours_left <= 0:
-            return s.min_edge * s.edge_escalation_multiplier
-        esc_h = max(1, s.edge_escalation_hours)
-        fraction = hours_left / esc_h
-        return s.min_edge * (
-            1.0 + (s.edge_escalation_multiplier - 1.0) * (1.0 - fraction)
-        )
+        """Time-to-close-scaled min_edge. Delegates to utils.probability."""
+        return compute_effective_min_edge(market)
 
 # WeatherEngine kept for seamless FastAPI / backward compatibility
 OPEN_METEO_MODEL_MAP = {
@@ -335,49 +313,15 @@ class WeatherEngine:
     def __init__(self, db_session_factory=None, cfg=None):
         self.db_session_factory = db_session_factory
         self.config = cfg or config
-        self.session: Optional[aiohttp.ClientSession] = None
+        self.session: aiohttp.ClientSession | None = None
         self.model_weights = self.config.get_normalized_weights()
         # Local cache for the current session to avoid redundant fetches (e.g. max/min overlap)
         self._forecast_cache = {}
 
     @staticmethod
     def _compute_effective_min_edge(market) -> float:
-        """Return the time-to-close-scaled min_edge for market.
-
-        Linearly ramps from 1x bot_config.strategy.min_edge at
-        edge_escalation_hours before resolution to
-        edge_escalation_multiplier * min_edge at the moment of close.
-        Clamps to the multiplier if we are already past resolution, and
-        never divides by zero.
-        """
-        s = bot_config.strategy
-        try:
-            resolution = (
-                getattr(market, 'resolution_date', None)
-                or getattr(market, 'target_date', None)
-            )
-            if resolution is None:
-                return s.min_edge
-            now = datetime.now(timezone.utc)
-            if getattr(resolution, 'tzinfo', None) is None:
-                resolution = resolution.replace(tzinfo=timezone.utc)
-            hours_left = (resolution - now).total_seconds() / 3600.0
-        except Exception:
-            return s.min_edge
-
-        # 60s tolerance for the boundary: a market created with
-        # resolution_date=now+esc_h drifts microseconds by the time the
-        # function runs, producing 0.01+1e-9 on CI. A 1-minute window
-        # makes the boundary deterministic.
-        if hours_left >= s.edge_escalation_hours - (60.0 / 3600.0):
-            return s.min_edge
-        if hours_left <= 0:
-            return s.min_edge * s.edge_escalation_multiplier
-        esc_h = max(1, s.edge_escalation_hours)
-        fraction = hours_left / esc_h
-        return s.min_edge * (
-            1.0 + (s.edge_escalation_multiplier - 1.0) * (1.0 - fraction)
-        )
+        """Return the time-to-close-scaled min_edge. Delegates to utils.probability."""
+        return compute_effective_min_edge(market)
 
 
     async def start(self):
@@ -394,11 +338,11 @@ class WeatherEngine:
         city_code: str,
         latitude: float,
         longitude: float,
-        target_date: Optional[datetime] = None,
-        market_ids: List[str] = None,
+        target_date: datetime | None = None,
+        market_ids: list[str] = None,
         db_session=None,
         metric: str = "temperature_2m_max",
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         if not city_code or (latitude == 0 and longitude == 0):
             return None
         if target_date is None:
@@ -410,7 +354,7 @@ class WeatherEngine:
             if api_name not in api_model_names:
                 api_model_names.append(api_name)
         models_str = ",".join(api_model_names)
-        
+
         # Cache check
         target_str = target_date.strftime("%Y-%m-%d")
         cache_key = (round(latitude, 4), round(longitude, 4), target_str)
@@ -468,7 +412,7 @@ class WeatherEngine:
                 api_metric = "temperature_2m_max"
                 if "min" in metric.lower():
                     api_metric = "temperature_2m_min"
-                
+
                 key = f"{api_metric}_{api_name}"
                 if key in daily_data:
                     temps = daily_data[key]
@@ -483,7 +427,11 @@ class WeatherEngine:
             if total_weight == 0:
                 return None
             weighted_mean = sum(self.model_weights.get(m, 0.0) * t for m, t in model_temps.items()) / total_weight
-            weighted_var = sum(self.model_weights.get(m, 0.0) * (t - weighted_mean)**2 for m, t in model_temps.items()) / total_weight
+            weighted_var = (
+                sum(self.model_weights.get(m, 0.0) * (t - weighted_mean)**2
+                    for m, t in model_temps.items())
+                / total_weight
+            )
             weighted_std = max(weighted_var ** 0.5, 0.5)
 
             if db_session is not None and market_ids:
@@ -505,7 +453,8 @@ class WeatherEngine:
                         ))
                 try:
                     db_session.commit()
-                    logger.info("Ensemble persisted for %d markets, coords=(%s, %s)", len(market_ids), latitude, longitude)
+                    logger.info("Ensemble persisted for %d markets, coords=(%s, %s)",
+                                len(market_ids), latitude, longitude)
                 except Exception as e:
                     db_session.rollback()
                     logger.error("Failed to persist ensemble: %s", e)
@@ -521,13 +470,19 @@ class WeatherEngine:
             logger.error("get_multi_model_forecast error: %s", e)
             return None
 
-    def _db_consensus(self, market_id: str) -> Optional[Dict]:
+    def _db_consensus(self, market_id: str) -> dict | None:
         if not market_id or not self.db_session_factory:
             return None
         db = self.db_session_factory()
         try:
             from database.models import WeatherForecast
-            fcs = db.query(WeatherForecast).filter(WeatherForecast.market_id == market_id).order_by(WeatherForecast.fetched_at.desc()).limit(30).all()
+            fcs = (
+                db.query(WeatherForecast)
+                .filter(WeatherForecast.market_id == market_id)
+                .order_by(WeatherForecast.fetched_at.desc())
+                .limit(30)
+                .all()
+            )
             if not fcs:
                 return None
             lat = {}
@@ -549,45 +504,37 @@ class WeatherEngine:
             db.close()
 
     def calculate_probability_above(self, strike_temp: float, consensus=None, market_id=""):
+        """P(YES) for a HIGH market — delegates to shared estimate_probability."""
         if not consensus:
             consensus = self._db_consensus(market_id)
         if not consensus:
             return 0.5
-        mean = consensus["weighted_mean"]
-        std = consensus["weighted_std"]
-        z = (strike_temp - mean) / std
-        if HAS_SCIPY:
-            return 1.0 - norm.cdf(z)
-        return 1.0 - self._normal_cdf(z)
+        return _estimate_probability(
+            mean=consensus["weighted_mean"],
+            std=consensus["weighted_std"],
+            threshold=strike_temp,
+            days_ahead=0,
+            market_type="HIGH",
+        )
 
     def calculate_probability_below(self, strike_temp: float, consensus=None, market_id=""):
+        """P(YES) for a LOW market — delegates to shared estimate_probability."""
         if not consensus:
             consensus = self._db_consensus(market_id)
         if not consensus:
             return 0.5
-        mean = consensus["weighted_mean"]
-        std = consensus["weighted_std"]
-        z = (strike_temp - mean) / std
-        if HAS_SCIPY:
-            return norm.cdf(z)
-        return self._normal_cdf(z)
+        return _estimate_probability(
+            mean=consensus["weighted_mean"],
+            std=consensus["weighted_std"],
+            threshold=strike_temp,
+            days_ahead=0,
+            market_type="LOW",
+        )
 
-    def _normal_cdf(self, z: float) -> float:
-        if z < -8:
-            return 0.0
-        if z > 8:
-            return 1.0
-        b1, b2, b3, b4, b5 = 0.319381530, -0.356563782, 1.781477937, -1.821255978, 1.330274429
-        p = 0.2316419
-        if z >= 0:
-            t = 1.0 / (1.0 + p * z)
-            poly = t * (b1 + t * (b2 + t * (b3 + t * (b4 + t * b5))))
-            return 1.0 - (1.0 / (2.0 * math.pi**0.5)) * (math.e ** (-z * z / 2)) * poly
-        t = 1.0 / (1.0 - p * z)
-        poly = t * (b1 + t * (b2 + t * (b3 + t * (b4 + t * b5))))
-        return (1.0 / (2.0 * math.pi**0.5)) * (math.e ** (-z * z / 2)) * poly
-
-    async def get_forecast(self, city_code: str, latitude: float, longitude: float, target_date: Optional[datetime] = None) -> Optional[Dict]:
+    async def get_forecast(
+        self, city_code: str, latitude: float, longitude: float,
+        target_date: datetime | None = None,
+    ) -> dict | None:
         return await self.get_multi_model_forecast(city_code, latitude, longitude, target_date)
 
     def update_model_weights(self, new_weights: dict):

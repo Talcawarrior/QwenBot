@@ -11,10 +11,10 @@ Covers AsyncHttpClient behavior independent of upstream API state:
 import pytest
 
 from scrapers.async_client import (  # noqa: E402
+    _THROTTLE_S,
+    MAX_CONCURRENT,
     AsyncHttpClient,
     cache_clear,
-    MAX_CONCURRENT,
-    _THROTTLE_S,
 )
 
 # Skip the whole module on minimal CI without aiohttp.
@@ -37,7 +37,7 @@ def test_throttle_constant_is_quarter_second():
 
 
 def test_cache_get_returns_miss_then_hit():
-    from scrapers.async_client import _cache_get, _cache_set, _cache_key
+    from scrapers.async_client import _cache_get, _cache_key, _cache_set
     key = _cache_key("https://example.com/x", {"a": 1})
     hit, _ = _cache_get(key)
     assert hit is False
@@ -48,7 +48,7 @@ def test_cache_get_returns_miss_then_hit():
 
 
 def test_cache_set_none_is_remembered_as_hit():
-    from scrapers.async_client import _cache_get, _cache_set, _cache_key
+    from scrapers.async_client import _cache_get, _cache_key, _cache_set
     key = _cache_key("https://example.com/y", None)
     _cache_set(key, None)
     hit, val = _cache_get(key)
@@ -60,7 +60,7 @@ def test_fetch_many_preserves_order():
     """Cache all entries so no network is hit; verify ordering."""
     c = AsyncHttpClient()
     # Pre-populate cache so no network
-    from scrapers.async_client import _cache_set, _cache_key
+    from scrapers.async_client import _cache_key, _cache_set
     _cache_set(_cache_key("https://a.example.com", None), {"i": 0})
     _cache_set(_cache_key("https://b.example.com", None), {"i": 1})
     _cache_set(_cache_key("https://c.example.com", None), {"i": 2})
@@ -84,7 +84,7 @@ def test_fetch_many_falls_back_to_sync_when_aiohttp_missing(monkeypatch):
     import scrapers.async_client as ac
     monkeypatch.setattr(ac, "_HAS_AIOHTTP", False)
     # Pre-cache a result so we can observe it came back
-    from scrapers.async_client import _cache_set, _cache_key
+    from scrapers.async_client import _cache_key, _cache_set
     _cache_set(_cache_key("https://sync.example.com", None), {"sync": True})
     c = AsyncHttpClient()
     out = c.fetch_many([("https://sync.example.com", None, "sync.example.com")])

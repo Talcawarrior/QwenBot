@@ -1,16 +1,15 @@
-"""Sinyal analizi, Kelly kasa yönetimi, risk kontrolü ve SIA kendi kendini geliştiren algoritma (Self-Improving Algorithm)."""
+"""Sinyal analizi, Kelly kasa yönetimi, risk kontrolü ve SIA (Self-Improving Algorithm)."""
 
 import json
 import logging
-from typing import Dict, List, Optional
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import func
+
+from config.settings import bot_config, config
+from database.models import OPEN_BET_STATUSES, Analysis, Bet, ModelPerformance, Portfolio, WeatherMarket
 from utils.kelly import kelly_bet_amount
-from utils.weights_store import (
-    load_weights, save_weights, load_strategy_params, save_strategy_params
-)
-from config.settings import config, bot_config
-from database.models import Bet, Portfolio, ModelPerformance
+from utils.weights_store import load_strategy_params, load_weights, save_strategy_params, save_weights
 
 logger = logging.getLogger("STRATEGY_ENGINE")
 
@@ -64,7 +63,7 @@ class RiskManager:
         # the actual portfolio, not just INITIAL_PORTFOLIO.
         self._load_portfolio_from_db()
         self.open_bets_count = 0
-        self.city_bet_counts: Dict[str, int] = {}
+        self.city_bet_counts: dict[str, int] = {}
         self._load_from_db()
 
     def _load_portfolio_from_db(self):
@@ -146,15 +145,16 @@ class RiskManager:
         if not self.db:
             return self.portfolio_value
         try:
-            from database.models import Portfolio, Bet
             from sqlalchemy import func
+
+            from database.models import Bet, Portfolio
             pf = self.db.query(Portfolio).filter(Portfolio.id == 1).first()
             if not pf:
                 return self.portfolio_value
             cash = float(pf.cash_balance or 0)
             exposure = float(
                 self.db.query(func.coalesce(func.sum(Bet.amount), 0.0))
-                .filter(Bet.status.in_(["active", "open", "placed", "pending"]))
+                .filter(Bet.status.in_(OPEN_BET_STATUSES))
                 .scalar() or 0.0
             )
             return cash + exposure
@@ -180,7 +180,7 @@ class RiskManager:
                 # legacy `stake_amount` which stays at 0.
                 total = (
                     self.db.query(func.coalesce(func.sum(Bet.amount), 0.0))
-                    .filter(Bet.status.in_(["active", "open", "placed", "pending"]))
+                    .filter(Bet.status.in_(OPEN_BET_STATUSES))
                     .scalar()
                 )
                 return float(total or 0.0)
@@ -240,7 +240,8 @@ class RiskManager:
         Returns: (should_exit: bool, reason: str)
         """
         cfg = self._get_risk_config()
-        entry = float(bet.entry_price) if bet.entry_price is not None else (float(bet.price) if bet.price is not None else 0.0)
+        raw = bet.entry_price if bet.entry_price is not None else bet.price
+        entry = float(raw) if raw is not None else 0.0
         if entry <= 0:
             return False, ""
         loss_pct = (current_price - entry) / entry
@@ -251,7 +252,8 @@ class RiskManager:
     def check_take_profit(self, bet, current_price: float, market=None) -> tuple:
         """Take-profit: pozisyon %take_profit_pct'den fazla kardaysa realize et."""
         cfg = self._get_risk_config()
-        entry = float(bet.entry_price) if bet.entry_price is not None else (float(bet.price) if bet.price is not None else 0.0)
+        raw = bet.entry_price if bet.entry_price is not None else bet.price
+        entry = float(raw) if raw is not None else 0.0
         if entry <= 0:
             return False, ""
         profit_pct = (current_price - entry) / entry
@@ -276,7 +278,8 @@ class RiskManager:
             if hours_left <= 0:
                 return False, ""  # Zaten geçmiş, settlement halleder
             if hours_left <= cfg.time_decay_hours:
-                entry = float(bet.entry_price) if bet.entry_price is not None else (float(bet.price) if bet.price is not None else 0.0)
+                raw = bet.entry_price if bet.entry_price is not None else bet.price
+                entry = float(raw) if raw is not None else 0.0
                 if entry > 0:
                     loss_pct = (current_price - entry) / entry
                     if loss_pct <= cfg.time_decay_threshold:
@@ -291,7 +294,8 @@ class RiskManager:
         En yüksek fiyatı Bet.result_data'da 'peak_price' olarak saklar.
         """
         cfg = self._get_risk_config()
-        entry = float(bet.entry_price) if bet.entry_price is not None else (float(bet.price) if bet.price is not None else 0.0)
+        raw = bet.entry_price if bet.entry_price is not None else bet.price
+        entry = float(raw) if raw is not None else 0.0
         if entry <= 0:
             return False, ""
 
@@ -463,7 +467,7 @@ class BettingEngine:
         self.weather_engine = weather_engine
         self.config = config
 
-    def analyze_signal(self, market_data: Dict, model_prob: float, side: str = "YES") -> Optional[Dict]:
+    def analyze_signal(self, market_data: dict, model_prob: float, side: str = "YES") -> dict | None:
         """Analyze signal, calculate edge and EV."""
         yes_price = market_data.get("yes_price", 0.5)
         if side.upper() == "NO":
@@ -492,7 +496,7 @@ class BettingEngine:
             "side": side,
         }
 
-    def create_ladder_orders(self, signal: Dict, bet_size: float) -> List[Dict]:
+    def create_ladder_orders(self, signal: dict, bet_size: float) -> list[dict]:
         """Create 3-level ladder orders. All start as PENDING."""
         edge = signal.get("edge", 0)
         if edge < 0.05:
@@ -524,7 +528,7 @@ class BettingEngine:
         ]
         return ladder
 
-    def calculate_position_size(self, signal: Dict, portfolio_value: float, risk_manager) -> float:
+    def calculate_position_size(self, signal: dict, portfolio_value: float, risk_manager) -> float:
         """Calculate position size using fractional Kelly and exposure caps."""
         market_price = signal["market_price"]
         kelly_size = risk_manager.calculate_kelly_bet_size(
@@ -563,20 +567,19 @@ class BettingEngine:
 
         model_prob = 0.55
         side = "YES"
-        if forecast and hasattr(self.weather_engine, "calculate_probability_above"):
+        if forecast:
+            from utils.probability import estimate_probability as _ep
             try:
-                if (
-                    "LOW" in str(market_type).upper()
-                    or "below" in str(getattr(market_data, "question", "") or "").lower()
-                ):
-                    model_prob = self.weather_engine.calculate_probability_below(
-                        strike_temp, forecast
-                    )
-                    side = "NO" if model_prob < 0.5 else "YES"
-                else:
-                    model_prob = self.weather_engine.calculate_probability_above(
-                        strike_temp, forecast
-                    )
+                mean = forecast.get("weighted_mean", 0) if isinstance(forecast, dict) else 0
+                std = forecast.get("weighted_std", 0) if isinstance(forecast, dict) else 0
+                model_prob = _ep(
+                    mean=float(mean),
+                    std=float(std),
+                    threshold=float(strike_temp),
+                    days_ahead=0,
+                    market_type=str(market_type),
+                )
+                side = "NO" if model_prob < 0.5 else "YES"
             except Exception:
                 model_prob = 0.55
 
@@ -703,7 +706,7 @@ class SIALoop:
         self.db_session_factory = db_session_factory
         self.config = cfg or config
         self.model_weights = self.config.MODEL_WEIGHTS.copy()
-        
+
         # Load persisted weights
         persisted_weights = load_weights()
         if persisted_weights:
@@ -714,7 +717,7 @@ class SIALoop:
                 "SIA weights loaded from disk: %s",
                 {k: round(v, 4) for k, v in self.model_weights.items()},
             )
-            
+
         # Load persisted strategy parameters
         persisted_strategy = load_strategy_params()
         if persisted_strategy:
@@ -725,7 +728,7 @@ class SIALoop:
                 strategy.kelly_fraction = float(persisted_strategy["kelly_fraction"])
             logger.info("SIA strategy parameters loaded from disk: %s", persisted_strategy)
 
-    def calculate_brier_score(self, predictions: List[float], outcomes: List[bool]) -> float:
+    def calculate_brier_score(self, predictions: list[float], outcomes: list[bool]) -> float:
         """Calculate Brier Score."""
         if len(predictions) != len(outcomes) or len(predictions) == 0:
             return 1.0
@@ -737,8 +740,18 @@ class SIALoop:
         brier_score = sum(squared_errors) / len(squared_errors)
         return round(brier_score, 4)
 
-    def analyze_model_performance(self, days: int = 30) -> Dict[str, Dict]:
-        """Analyze performance of each model over recent days."""
+    def analyze_model_performance(self, days: int = 30) -> dict[str, dict]:
+        """Analyze performance of each model over recent settled bets.
+
+        For each settled bet, fetches the associated Analysis record containing
+        per-model probability predictions (``model_predictions`` JSON).  The
+        YES/NO outcome is determined from the **market resolution data**
+        (``raw_data`` JSON → ``outcome`` field), ensuring that Brier is always
+        computed against P(YES) regardless of which side the bot bet.
+
+        Models with fewer than 10 predictions are logged but their statistics
+        carry the ``frozen`` flag so ``optimize_weights`` can skip them.
+        """
         performance = {}
 
         if not self.db_session_factory:
@@ -754,8 +767,12 @@ class SIALoop:
         db = self.db_session_factory()
         try:
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+            # ── Load settled bets with their analysis + market resolution ──
             settled_bets = (
-                db.query(Bet)
+                db.query(Bet, Analysis, WeatherMarket)
+                .join(Analysis, Bet.analysis_id == Analysis.id, isouter=True)
+                .join(WeatherMarket, Bet.market_id == WeatherMarket.id, isouter=True)
                 .filter(
                     Bet.status.in_(["won", "lost"]),
                     Bet.settled_at >= cutoff,
@@ -763,43 +780,82 @@ class SIALoop:
                 .all()
             )
 
+            # Collect per-model prediction/outcome pairs
+            from collections import defaultdict
+
+            model_data: dict[str, list] = defaultdict(list)
+            # model_data[model_name] = list of (predicted_prob, actual_yes)
+
+            for bet, analysis, market in settled_bets:
+                if analysis is None or not analysis.model_predictions:
+                    continue  # skip bets without per-model predictions
+
+                try:
+                    mp = json.loads(analysis.model_predictions)
+                except (TypeError, json.JSONDecodeError):
+                    continue
+
+                model_probs: dict = mp.get("model_probs", {})
+                if not model_probs:
+                    continue
+
+                # Resolve YES/NO outcome from market resolution data,
+                # NOT from bet.status (which reflects the bot's side,
+                # not the market truth).
+                outcome_yes = self._resolve_market_outcome(market)
+
+                if outcome_yes is None:
+                    continue  # market not yet resolved → skip
+
+                for model_name, prob in model_probs.items():
+                    if model_name not in self.model_weights:
+                        continue
+                    clamped = max(0.01, min(0.99, float(prob)))
+                    model_data[model_name].append((clamped, outcome_yes))
+
+            # ── Compute per-model Brier ──────────────────────────────────
             for model_name in self.model_weights.keys():
-                if settled_bets:
-                    predictions = []
-                    outcomes = []
-                    for bet in settled_bets:
-                        # Use fair_value (model probability 0-1), NOT expected_value (edge)
-                        pred = getattr(bet, "fair_value", None)
-                        if pred is None or pred <= 0:
-                            pred = 0.5
-                        predictions.append(min(0.99, max(0.01, float(pred))))
-                        outcome = getattr(bet, "realized_pnl", 0) > 0
-                        outcomes.append(outcome)
-                else:
+                records = model_data.get(model_name, [])
+
+                if not records:
                     performance[model_name] = {
                         "brier_score": 0.25,
                         "accuracy": 0.5,
                         "num_predictions": 0,
                         "avg_confidence": 0.5,
+                        "frozen": True,
                     }
                     continue
 
-                brier_score = self.calculate_brier_score(predictions, outcomes)
+                predictions = [r[0] for r in records]
+                outcomes_bool = [r[1] for r in records]
+
+                brier_score = self.calculate_brier_score(predictions, outcomes_bool)
                 correct = sum(
                     1
-                    for pred, out in zip(predictions, outcomes)
+                    for pred, out in zip(predictions, outcomes_bool)
                     if (pred >= 0.5) == out
                 )
-                accuracy = correct / len(predictions) if predictions else 0
+                num_pred = len(predictions)
+                accuracy = correct / num_pred if num_pred else 0
+                frozen = num_pred < 10
+
+                if frozen:
+                    logger.info(
+                        "SIA: %s has only %d predictions (< 10) — weight frozen",
+                        model_name, num_pred,
+                    )
 
                 performance[model_name] = {
                     "brier_score": brier_score,
                     "accuracy": round(accuracy, 4),
-                    "num_predictions": len(predictions),
-                    "avg_confidence": round(sum(predictions) / len(predictions), 4)
-                    if predictions
+                    "num_predictions": num_pred,
+                    "avg_confidence": round(sum(predictions) / num_pred, 4)
+                    if num_pred
                     else 0,
+                    "frozen": frozen,
                 }
+
             return performance
         except Exception:
             logger.exception("Error analyzing model performance")
@@ -807,23 +863,76 @@ class SIALoop:
         finally:
             db.close()
 
-    def optimize_weights(self, performance_data: Dict[str, Dict]) -> Dict[str, float]:
-        """Optimize model weights according to Brier Scores."""
-        new_weights = {}
-        inverse_scores = {
-            model: max(0.01, 1.0 - data["brier_score"])
-            for model, data in performance_data.items()
-        }
-        total = sum(inverse_scores.values())
+    @staticmethod
+    def _resolve_market_outcome(market) -> bool | None:
+        """Resolve YES/NO outcome from market resolution data (raw_data JSON).
 
-        if total > 0:
-            for model, score in inverse_scores.items():
-                new_weights[model] = round(score / total, 4)
-        else:
-            n_models = len(self.model_weights)
-            new_weights = {
-                model: round(1.0 / n_models, 4) for model in self.model_weights
+        Returns ``True`` if the market resolved YES, ``False`` if NO,
+        ``None`` if not yet resolved or unknown.
+        """
+        if market is None:
+            return None
+        raw = getattr(market, "raw_data", None)
+        if not raw:
+            return None
+        try:
+            rd = json.loads(raw) if isinstance(raw, str) else raw
+            outcome = rd.get("outcome", "")
+            if outcome == "YES":
+                return True
+            if outcome == "NO":
+                return False
+        except (TypeError, json.JSONDecodeError):
+            pass
+        return None
+
+    def optimize_weights(self, performance_data: dict[str, dict]) -> dict[str, float]:
+        """Optimize model weights according to Brier Scores.
+
+        Models whose ``frozen`` flag is ``True`` (fewer than 10 predictions)
+        keep their current weight unchanged.  Remaining weights are
+        redistributed proportionally and normalized to sum to 1.0.
+        """
+        new_weights = {}
+
+        # Separate frozen vs optimizable models
+        frozen_models = {
+            m: self.model_weights.get(m, 0.0)
+            for m, d in performance_data.items()
+            if d.get("frozen", False)
+        }
+        optimizable = {
+            m: d
+            for m, d in performance_data.items()
+            if not d.get("frozen", False)
+        }
+
+        if optimizable:
+            frozen_total = sum(frozen_models.values())
+            remaining_budget = 1.0 - frozen_total
+
+            inverse_scores = {
+                model: max(0.01, 1.0 - data["brier_score"])
+                for model, data in optimizable.items()
             }
+            total_inv = sum(inverse_scores.values())
+
+            if total_inv > 0:
+                for model, score in inverse_scores.items():
+                    new_weights[model] = round(
+                        score / total_inv * remaining_budget, 4
+                    )
+            else:
+                # All inverse scores collapsed; distribute remaining budget equally
+                n_opt = len(optimizable) if optimizable else 1
+                for model in optimizable:
+                    new_weights[model] = round(remaining_budget / n_opt, 4)
+        else:
+            # All models frozen — keep existing weights
+            new_weights = dict(self.model_weights)
+
+        # Carry frozen weights forward
+        new_weights.update(frozen_models)
 
         logger.info("SIA OPTIMIZASYONU:")
         for model, weight in new_weights.items():
@@ -846,10 +955,10 @@ class SIALoop:
 
         return new_weights
 
-    def optimize_strategy_params(self, performance_summary: Dict[str, float]):
+    def optimize_strategy_params(self, performance_summary: dict[str, float]):
         """SIA Financial Feedback Agent: Autonomous tuning of betting parameters.
-        
-        Inspired by hexo-ai/sia architecture: analyzes performance logs and 
+
+        Inspired by hexo-ai/sia architecture: analyzes performance logs and
         updates the Target Agent's (bot) harness/settings.
         """
         if not performance_summary:
@@ -857,36 +966,48 @@ class SIALoop:
 
         win_rate = performance_summary.get("win_rate", 0.5)
         total_roi = performance_summary.get("total_roi", 0.0)
-        
+
         # Access the strategy config
         strategy = bot_config.strategy
-        
+
         logger.info("SIA FINANCIAL FEEDBACK: Win Rate=%.2f%%, ROI=%.2f%%", win_rate * 100, total_roi)
-        
+
         # 1. Selectivity (min_edge)
         if win_rate < 0.45:
             # Low win rate: tighten the filter
             old_edge = strategy.min_edge
             strategy.min_edge = min(0.15, strategy.min_edge + 0.01)
-            logger.info("  min_edge: %.2f -> %.2f (Selectivity INCREASED due to low Win Rate)", old_edge, strategy.min_edge)
+            logger.info(
+                "  min_edge: %.2f -> %.2f (Selectivity INCREASED due to low Win Rate)",
+                old_edge, strategy.min_edge,
+            )
         elif win_rate > 0.60 and total_roi > 5:
             # High win rate & profit: relax filter to find more trades
             old_edge = strategy.min_edge
             strategy.min_edge = max(0.01, strategy.min_edge - 0.005)
-            logger.info("  min_edge: %.2f -> %.2f (Selectivity RELAXED due to high performance)", old_edge, strategy.min_edge)
+            logger.info(
+                "  min_edge: %.2f -> %.2f (Selectivity RELAXED due to high performance)",
+                old_edge, strategy.min_edge,
+            )
 
         # 2. Risk Appetite (kelly_fraction)
         if total_roi < -10:
             # Significant drawdown: reduce risk
             old_kelly = strategy.kelly_fraction
             strategy.kelly_fraction = max(0.05, strategy.kelly_fraction - 0.05)
-            logger.info("  kelly_fraction: %.2f -> %.2f (Risk REDUCED due to drawdown)", old_kelly, strategy.kelly_fraction)
+            logger.info(
+                "  kelly_fraction: %.2f -> %.2f (Risk REDUCED due to drawdown)",
+                old_kelly, strategy.kelly_fraction,
+            )
         elif total_roi > 10 and win_rate > 0.55:
             # High growth: slightly increase risk (capped at 0.25)
             old_kelly = strategy.kelly_fraction
             strategy.kelly_fraction = min(0.25, strategy.kelly_fraction + 0.02)
-            logger.info("  kelly_fraction: %.2f -> %.2f (Risk INCREASED due to strong growth)", old_kelly, strategy.kelly_fraction)
-            
+            logger.info(
+                "  kelly_fraction: %.2f -> %.2f (Risk INCREASED due to strong growth)",
+                old_kelly, strategy.kelly_fraction,
+            )
+
         # Persist changes
         save_strategy_params({
             "min_edge": strategy.min_edge,
@@ -902,7 +1023,7 @@ class SIALoop:
         db = self.db_session_factory()
         try:
             logger.info("SIA Multi-Agent Loop baslatiliyor...")
-            
+
             # --- 1. Model Weights Optimization (Legacy SIA) ---
             performance = self.analyze_model_performance(days=30)
             if performance:
@@ -916,12 +1037,12 @@ class SIALoop:
             win_count = db.query(Bet).filter(Bet.status == "won").count()
             loss_count = db.query(Bet).filter(Bet.status == "lost").count()
             total = win_count + loss_count
-            
+
             portfolio = db.query(Portfolio).filter(Portfolio.id == 1).first()
             initial = getattr(portfolio, "initial_value", 1000.0)
             current_val = getattr(portfolio, "total_value", 1000.0)
             roi = ((current_val - initial) / initial) * 100 if initial > 0 else 0
-            
+
             summary = {
                 "win_rate": win_count / total if total > 0 else 0.5,
                 "total_roi": roi,

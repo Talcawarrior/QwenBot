@@ -1,24 +1,24 @@
 
-import os
-import json
 import argparse
 import asyncio
+import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import List
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 
+from config.logging_config import setup_logging
+
 # Package Imports
 from config.settings import config
-from config.logging_config import setup_logging
-from database.db import init_db, get_db_session, get_db_session_factory, ensure_initial_portfolio
-from database.models import Portfolio, WeatherMarket, Bet, Analysis
-from engine.strategy import RiskManager, BettingEngine, SIALoop
+from database.db import ensure_initial_portfolio, get_db_session, get_db_session_factory, init_db
+from database.models import OPEN_BET_STATUSES, Analysis, Bet, Portfolio, WeatherMarket
 from engine.calculator import WeatherEngine
+from engine.strategy import BettingEngine, RiskManager, SIALoop
 from executor.settler import SettlementEngine
 from scrapers.polymarket import PolymarketScraper
 from utils.price_sanity import safe_ev
@@ -38,7 +38,7 @@ class BotState:
         self.last_scan = None
         self.total_signals = 0
         self.total_bets = 0
-        self.websocket_clients: List[WebSocket] = []
+        self.websocket_clients: list[WebSocket] = []
         self.tasks = {}
         self.start_stop_lock = asyncio.Lock()
 
@@ -135,21 +135,23 @@ async def root():
 @app.get("/api/status")
 async def get_status():
     """Get bot status and metrics with strict accounting."""
-    from database.models import Bet, Analysis
     from sqlalchemy import func
+
+    from database.models import Analysis, Bet
     db = get_db_session()
     try:
         portfolio = db.query(Portfolio).filter(Portfolio.id == 1).first()
-        
+
         # 1. Realized PnL (Closed bets)
         from datetime import datetime, timezone
-        _today_start = datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
+        _ts = datetime.now(timezone.utc).replace(tzinfo=None)
+        _today_start = _ts.replace(hour=0, minute=0, second=0, microsecond=0)
         daily_pnl = (
             db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
             .filter(Bet.status.in_(("won", "lost", "settled")), Bet.settled_at >= _today_start)
             .scalar()
         ) or 0.0
-        
+
         realized_pnl_db = (
             db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
             .filter(Bet.status.in_(("won", "lost", "settled")))
@@ -157,7 +159,7 @@ async def get_status():
         ) or 0.0
 
         # 2. Unrealized PnL (Open bets)
-        open_statuses = ("active", "open", "placed", "pending")
+        open_statuses = OPEN_BET_STATUSES
         unrealized_pnl_db = (
             db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0))
             .filter(Bet.status.in_(open_statuses))
@@ -169,7 +171,7 @@ async def get_status():
         loss_count = db.query(Bet).filter(Bet.status == "lost").count()
         total_bets_db = db.query(Bet).filter(Bet.status.in_(open_statuses)).count()
         total_signals_db = db.query(Analysis).filter(Analysis.should_bet.is_(True)).count()
-        
+
         exposure_db = (
             db.query(func.coalesce(func.sum(Bet.amount), 0.0))
             .filter(Bet.status.in_(open_statuses))
@@ -178,7 +180,7 @@ async def get_status():
 
         initial_capital = state.config.INITIAL_PORTFOLIO
         total_pnl = realized_pnl_db + unrealized_pnl_db
-        
+
         # ROI
         total_roi = (total_pnl / initial_capital) * 100 if initial_capital > 0 else 0
         daily_roi = (daily_pnl / initial_capital) * 100 if initial_capital > 0 else 0
@@ -222,12 +224,13 @@ async def get_status():
 async def get_markets():
     """Get all future active weather markets AND missed signals (rejected bets)."""
     from datetime import timedelta
+
+    from database.models import Analysis, Bet, WeatherForecast, WeatherMarket
     from engine.calculator import Calculator
-    from database.models import WeatherForecast, Analysis, Bet, WeatherMarket
     db = get_db_session()
     try:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        
+
         # 1. Fetch missed signals (should_bet=True but no active bet)
         # These are the "164 - 8 = 156" signals
         missed_signals = (
@@ -271,13 +274,20 @@ async def get_markets():
             .limit(100)
             .all()
         )
-        
+
         calc = Calculator()
         for m in markets:
-            if m.yes_price is None or m.threshold is None: continue
+            if m.yes_price is None or m.threshold is None:
+                continue
             current_price = float(m.yes_price)
             model_prob = current_price
-            forecasts = db.query(WeatherForecast).filter(WeatherForecast.market_id == m.id).order_by(WeatherForecast.fetched_at.desc()).limit(8).all()
+            forecasts = (
+                db.query(WeatherForecast)
+                .filter(WeatherForecast.market_id == m.id)
+                .order_by(WeatherForecast.fetched_at.desc())
+                .limit(8)
+                .all()
+            )
             if forecasts:
                 latest_vals = [f.predicted_value for f in forecasts]
                 days_ahead = max((m.target_date - now).days, 1)
@@ -297,7 +307,7 @@ async def get_markets():
                 "ev": safe_ev(model_prob, current_price),
                 "status": "OPEN"
             })
-        
+
         return {"markets": market_list, "count": len(market_list)}
     except Exception as e:
         logger.error("Markets API error: %s", e)
@@ -305,22 +315,65 @@ async def get_markets():
     finally:
         db.close()
 
-# Keep other endpoints (signals, history, cleanup, start, stop, reset, ws, loops, run_cli) 
+@app.get("/api/bets")
+async def get_bets(status: str = "", limit: int = 100, offset: int = 0):
+    """Get all bets with optional status filter and pagination.
+
+    Query params:
+      status  (str, optional)  — comma-separated list of statuses to filter by.
+                                Omitting returns ALL statuses.
+      limit   (int, default 100)
+      offset  (int, default 0)
+    """
+    db = get_db_session()
+    try:
+        q = db.query(Bet)
+        if status:
+            statuses = [s.strip() for s in status.split(",") if s.strip()]
+            q = q.filter(Bet.status.in_(statuses))
+        total = q.count()
+        rows = q.order_by(Bet.placed_at.desc()).offset(offset).limit(limit).all()
+        bets = []
+        for b in rows:
+            bets.append({
+                "id": b.id,
+                "market_id": b.market_id,
+                "city": b.city or "",
+                "side": b.side or b.outcome or "YES",
+                "amount": float(b.amount or 0),
+                "entry_price": float(b.entry_price or b.price or 0),
+                "current_price": float(b.current_price or b.entry_price or b.price or 0),
+                "status": b.status,
+                "realized_pnl": float(b.realized_pnl or 0),
+                "unrealized_pnl": float(b.unrealized_pnl or 0),
+                "placed_at": b.placed_at.isoformat() if b.placed_at else None,
+                "settled_at": b.settled_at.isoformat() if b.settled_at else None,
+            })
+        return {"bets": bets, "count": len(bets), "total": total}
+    except Exception as e:
+        logger.error("Bets API error: %s", e)
+        return {"error": str(e), "bets": [], "count": 0, "total": 0}
+    finally:
+        db.close()
+
+# Keep other endpoints (signals, history, cleanup, start, stop, reset, ws, loops, run_cli)
 # exactly as they were in the previous successful read, but I'll write the full file
 # to ensure no truncation.
 
 def _safe_parse_ladder(raw):
-    if not raw: return []
+    if not raw:
+        return []
     try:
         data = json.loads(raw) if isinstance(raw, str) else raw
         return data if isinstance(data, list) else []
-    except Exception: return []
+    except Exception:
+        return []
 
 @app.get("/api/signals")
 async def get_signals():
     db = get_db_session()
     try:
-        active_bets = db.query(Bet).filter(Bet.status.in_(["active", "open", "placed", "pending"])).all()
+        active_bets = db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).all()
         signals = []
         for bet in active_bets:
             market = db.query(WeatherMarket).filter(WeatherMarket.id == bet.market_id).first()
@@ -332,15 +385,24 @@ async def get_signals():
             entry_edge = None
             move_pct = None
             try:
-                latest = db.query(Analysis).filter(Analysis.market_id == bet.market_id).order_by(Analysis.analyzed_at.desc()).first()
+                latest = (
+                    db.query(Analysis)
+                    .filter(Analysis.market_id == bet.market_id)
+                    .order_by(Analysis.analyzed_at.desc())
+                    .first()
+                )
                 if latest:
                     fair_value = float(latest.estimated_probability)
-                    if current is not None: live_edge = fair_value - current
+                    if current is not None:
+                        live_edge = fair_value - current
                 if bet.analysis_id:
                     origin = db.query(Analysis).filter(Analysis.id == bet.analysis_id).first()
-                    if origin: entry_edge = float(origin.edge)
-                if entry and current and entry > 0: move_pct = (current - entry) / entry
-            except Exception: pass
+                    if origin:
+                        entry_edge = float(origin.edge)
+                if entry and current and entry > 0:
+                    move_pct = (current - entry) / entry
+            except Exception:
+                pass
             signals.append({
                 "id": bet.id, "market_id": bet.market_id, "city": bet.city or (market.city if market else "Unknown"),
                 "outcome": bet.side or bet.outcome or "YES", "entry_price": entry, "current_price": current,
@@ -351,50 +413,77 @@ async def get_signals():
                 "resolution_date": res_date.isoformat() if res_date else None, "status": bet.status
             })
         return {"signals": signals, "count": len(signals)}
-    finally: db.close()
+    finally:
+        db.close()
 
 @app.get("/api/history")
 async def get_history():
     db = get_db_session()
     try:
-        settled_bets = db.query(Bet).filter(Bet.status.in_(["settled", "won", "lost"])).order_by(Bet.settled_at.desc()).limit(50).all()
+        settled_bets = (
+            db.query(Bet)
+            .filter(Bet.status.in_(["settled", "won", "lost"]))
+            .order_by(Bet.settled_at.desc())
+            .limit(50)
+            .all()
+        )
         history = []
         total_won = 0
         total_lost = 0
         for bet in settled_bets:
-            if bet.pnl > 0: total_won += 1
-            else: total_lost += 1
+            if bet.pnl > 0:
+                total_won += 1
+            else:
+                total_lost += 1
             history.append({
                 "id": bet.id, "city": bet.city, "outcome": bet.side or "YES", "entry_price": bet.price,
                 "stake_amount": bet.amount, "realized_pnl": bet.pnl or 0.0, "result": "WIN" if bet.pnl > 0 else "LOSS",
                 "settled_at": bet.settled_at.isoformat() if bet.settled_at else None
             })
         win_rate = (total_won / (total_won + total_lost) * 100) if (total_won + total_lost) > 0 else 0
-        return {"history": history, "stats": {"total_won": total_won, "total_lost": total_lost, "win_rate": round(win_rate, 2)}}
-    finally: db.close()
+        return {
+            "history": history,
+            "stats": {
+                "total_won": total_won,
+                "total_lost": total_lost,
+                "win_rate": round(win_rate, 2),
+            },
+        }
+    finally:
+        db.close()
 
 @app.post("/api/cleanup")
 async def cleanup_old_data():
     db = get_db_session()
     try:
-        _today_start = datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
-        stale_analyses = db.query(Analysis).filter(Analysis.should_bet.is_(True), Analysis.analyzed_at < _today_start).delete(synchronize_session=False)
-        stale_bets = db.query(Bet).filter(Bet.status.in_(("active", "open", "placed", "pending")), Bet.placed_at < _today_start).all()
+        _ts = datetime.now(timezone.utc).replace(tzinfo=None)
+        _today_start = _ts.replace(hour=0, minute=0, second=0, microsecond=0)
+        stale_analyses = (
+            db.query(Analysis)
+            .filter(Analysis.should_bet.is_(True), Analysis.analyzed_at < _today_start)
+            .delete(synchronize_session=False)
+        )
+        stale_bets = db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES), Bet.placed_at < _today_start).all()
         cancelled = 0
         for bet in stale_bets:
-            bet.status = "cancelled"; bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            bet.status = "cancelled"
+            bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
             portfolio = db.query(Portfolio).filter(Portfolio.id == 1).first()
-            if portfolio: portfolio.cash_balance = (portfolio.cash_balance or 0.0) + float(bet.amount or 0.0)
+            if portfolio:
+                portfolio.cash_balance = (portfolio.cash_balance or 0.0) + float(bet.amount or 0.0)
             cancelled += 1
         db.commit()
         return {"deleted_analyses": stale_analyses, "cancelled_bets": cancelled}
-    finally: db.close()
+    finally:
+        db.close()
 
 @app.post("/api/start")
 async def start_bot():
     async with state.start_stop_lock:
-        if state.is_running: return {"status": "already_running"}
-        state.is_running = True; state.locked = False
+        if state.is_running:
+            return {"status": "already_running"}
+        state.is_running = True
+        state.locked = False
         state.tasks["scan_and_bet"] = asyncio.create_task(scan_and_bet_loop())
         state.tasks["settlement"] = asyncio.create_task(settlement_loop())
         return {"status": "started"}
@@ -403,8 +492,9 @@ async def start_bot():
 async def stop_bot():
     async with state.start_stop_lock:
         state.is_running = False
-        for t in list(state.tasks.values()): 
-            if not t.done(): t.cancel()
+        for t in list(state.tasks.values()):
+            if not t.done():
+                t.cancel()
         state.tasks.clear()
         return {"status": "stopped"}
 
@@ -417,13 +507,13 @@ async def reset_bot():
         # Clear all operational data
         db.query(Bet).delete()
         db.query(Analysis).delete()
-        
+
         # Reset portfolio to exactly 1000
         pf = db.query(Portfolio).filter(Portfolio.id == 1).first()
         if not pf:
             pf = Portfolio(id=1)
             db.add(pf)
-        
+
         pf.cash_balance = 1000.0
         pf.initial_value = 1000.0
         pf.current_value = 1000.0
@@ -432,14 +522,14 @@ async def reset_bot():
         pf.daily_pnl = 0.0
         pf.total_won = 0
         pf.total_lost = 0
-        
+
         db.commit()
-        
+
         # Reset in-memory state
         state.total_signals = 0
         state.total_bets = 0
         state.last_scan = None
-        
+
         return {
             "status": "reset",
             "message": "Sistem sifirlandi. Lutfen manuel olarak baslatin.",
@@ -459,44 +549,87 @@ async def reset_bot():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept(); state.websocket_clients.append(websocket)
+    await websocket.accept()
+    state.websocket_clients.append(websocket)
     try:
-        while True: await websocket.receive_text()
-    except WebSocketDisconnect: 
-        if websocket in state.websocket_clients: state.websocket_clients.remove(websocket)
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        if websocket in state.websocket_clients:
+            state.websocket_clients.remove(websocket)
 
 async def scan_and_bet_loop():
-    from jobs.scheduler import run_fetch_markets, run_parse_markets, run_fetch_weather, run_analyze, run_place_bets, run_update_prices, run_risk_management
+    from jobs.scheduler import (
+        run_analyze,
+        run_fetch_markets,
+        run_fetch_weather,
+        run_parse_markets,
+        run_place_bets,
+        run_risk_management,
+        run_update_prices,
+    )
     while state.is_running:
         try:
-            await asyncio.to_thread(run_fetch_markets); await asyncio.to_thread(run_parse_markets)
-            await asyncio.to_thread(run_fetch_weather); await asyncio.to_thread(run_analyze)
-            await asyncio.to_thread(run_place_bets); await asyncio.to_thread(run_update_prices)
+            await asyncio.to_thread(run_fetch_markets)
+            await asyncio.to_thread(run_parse_markets)
+            await asyncio.to_thread(run_fetch_weather)
+            await asyncio.to_thread(run_analyze)
+            await asyncio.to_thread(run_place_bets)
+            await asyncio.to_thread(run_update_prices)
             # Aktif risk yönetimi: stop-loss, take-profit, time-decay, trailing stop
             await asyncio.to_thread(run_risk_management)
-        except Exception as e: logger.error("Scan error: %s", e)
+        except Exception as e:
+            logger.error("Scan error: %s", e)
         await asyncio.sleep(state.config.SCAN_INTERVAL)
 
 async def settlement_loop():
     from jobs.scheduler import run_settle
     while state.is_running:
         try:
-            if state.sia_loop: await asyncio.to_thread(state.sia_loop.run_optimization_cycle)
+            if state.sia_loop:
+                await asyncio.to_thread(state.sia_loop.run_optimization_cycle)
             await asyncio.to_thread(run_settle)
-        except Exception as e: logger.error("Settle error: %s", e)
+        except Exception as e:
+            logger.error("Settle error: %s", e)
         await asyncio.sleep(state.config.SETTLEMENT_INTERVAL)
 
 def run_cli():
-    parser = argparse.ArgumentParser(); parser.add_argument("command")
-    args = parser.parse_args(); init_db(); ensure_initial_portfolio()
-    from jobs.scheduler import run_fetch_markets, run_parse_markets, run_fetch_weather, run_analyze, run_place_bets, run_settle, run_report
-    cmds = {"fetch": run_fetch_markets, "parse": run_parse_markets, "weather": run_fetch_weather, "analyze": run_analyze, "bet": run_place_bets, "settle": run_settle, "report": run_report}
-    if args.command == "run": import uvicorn; uvicorn.run(app, host=config.HOST, port=config.PORT)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("command")
+    args = parser.parse_args()
+    init_db()
+    ensure_initial_portfolio()
+    from jobs.scheduler import (
+        run_analyze,
+        run_fetch_markets,
+        run_fetch_weather,
+        run_parse_markets,
+        run_place_bets,
+        run_report,
+        run_settle,
+    )
+    cmds = {
+        "fetch": run_fetch_markets,
+        "parse": run_parse_markets,
+        "weather": run_fetch_weather,
+        "analyze": run_analyze,
+        "bet": run_place_bets,
+        "settle": run_settle,
+        "report": run_report,
+    }
+    if args.command == "run":
+        import uvicorn  # noqa: I001
+        uvicorn.run(app, host=config.HOST, port=config.PORT)
     elif args.command == "reset":
         db = get_db_session()
-        db.query(Bet).update({"status": "cancelled"}); db.query(Analysis).delete()
+        db.query(Bet).update({"status": "cancelled"})
+        db.query(Analysis).delete()
         pf = db.query(Portfolio).filter(Portfolio.id == 1).first()
-        pf.cash_balance = 1000.0; db.commit(); db.close()
-    elif args.command in cmds: print(cmds[args.command]())
+        pf.cash_balance = 1000.0
+        db.commit()
+        db.close()
+    elif args.command in cmds:
+        print(cmds[args.command]())
 
-if __name__ == "__main__": run_cli()
+if __name__ == "__main__":
+    run_cli()

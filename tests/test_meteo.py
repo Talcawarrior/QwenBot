@@ -1,6 +1,7 @@
 """Test cases for MeteoFetcher."""
 
 import pytest
+
 from scrapers.meteo import MeteoFetcher
 
 

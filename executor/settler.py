@@ -1,42 +1,55 @@
-﻿"""Settlement engine: resolves bets when markets close, calculates PnL."""
+﻿"""Settlement engine: resolves bets via Polymarket Gamma API resolution."""
+# pylint: disable=import-error,broad-exception-caught
 
 import json
 import logging
-from datetime import datetime, timezone
-from database.db import get_session
-from database.models import Bet, WeatherMarket, Portfolio
-from config.settings import config
+from datetime import datetime, timedelta, timezone
+
 import requests  # pylint: disable=import-error
+
+from config.settings import config
+from database.db import get_session
+from database.models import OPEN_BET_STATUSES, Bet, Portfolio, WeatherMarket
 
 logger = logging.getLogger("EXECUTOR_SETTLER")
 
+GAMMA_API_BASE = "https://gamma-api.polymarket.com"
+
 
 class SettlementEngine:
-    """Resolves open bets by comparing Polymarket outcome with bet side."""
+    """Resolves open bets by reading Polymarket's official resolution data.
+
+    Market resolution is fetched from the Gamma API (the same source the
+    Polymarket UI uses).  Bets are settled only when the API indicates
+    ``closed == true``, ``umaResolutionStatus == "resolved"``, and valid
+    ``outcomePrices`` are available.
+    """
 
     def __init__(self):
         self.fee_rate = float(getattr(config, "FEE_DRAG", 0.02))
 
+    # ── Public API ─────────────────────────────────────────────────────────
+
     def settle_all(self) -> dict:
-        """Settle all markets whose target_date has passed.
+        """Settle all markets whose ``target_date`` has passed.
 
         Returns dict with keys: win, loss, pending, total_pnl.
+        Markets that have been pending for >48 hours get an ERROR-level alert
+        but keep their current status (they will be retried on the next cycle).
         """
         won_count = 0
         lost_count = 0
         pending_count = 0
         total_pnl = 0.0
+        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
 
         with get_session() as session:
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
-
-            # Find markets that should be settled
             open_statuses = ("open", "bet_placed")
             markets_to_settle = (
                 session.query(WeatherMarket)
                 .filter(
                     WeatherMarket.status.in_(open_statuses),
-                    WeatherMarket.target_date <= now,
+                    WeatherMarket.target_date <= now_naive,
                 )
                 .all()
             )
@@ -50,11 +63,11 @@ class SettlementEngine:
                     result = self._settle_market(session, market)
                     if result is None:
                         pending_count += 1
-                    elif result["won"]:
-                        won_count += 1
-                        total_pnl += result["pnl"]
+                        # 48-hour pending alert (status unchanged)
+                        self._check_stale_pending(market, now_naive)
                     else:
-                        lost_count += 1
+                        won_count += result.get("won", 0)
+                        lost_count += result.get("lost", 0)
                         total_pnl += result["pnl"]
                 except Exception as e:
                     logger.error(
@@ -65,8 +78,7 @@ class SettlementEngine:
 
             session.commit()
 
-        # Post-settlement portfolio sync: all bets are settled, so
-        # exposure=0, unrealized=0, total_value=cash_balance.
+        # Post-settlement portfolio sync
         if markets_to_settle:
             with get_session() as sync_session:
                 portfolio = sync_session.query(Portfolio).filter(Portfolio.id == 1).first()
@@ -87,13 +99,19 @@ class SettlementEngine:
             "total_pnl": total_pnl,
         }
 
-    def _settle_market(self, session, market) -> dict | None:
-        """Settle a single market. Returns {won, pnl} or None."""
+    # ── Single-market settlement ───────────────────────────────────────────
+
+    def _settle_market(self, session, market) -> dict | None:  # pylint: disable=too-many-locals
+        """Settle a single market via Gamma API resolution.
+
+        Returns ``{"won": bool, "pnl": float}`` on success,
+        ``None`` if the market is not yet resolved (pending).
+        """
         open_bets = (
             session.query(Bet)
             .filter(
                 Bet.market_id == market.id,
-                Bet.status.in_(("active", "open", "placed", "pending")),
+                Bet.status.in_(OPEN_BET_STATUSES),
             )
             .all()
         )
@@ -102,38 +120,32 @@ class SettlementEngine:
             market.status = "expired"
             return None
 
-        # Get actual weather data
-        actual_temp = self._get_actual_temperature(market)
-        if actual_temp is None:
+        # ── Fetch resolution from Gamma API ────────────────────────────────
+        outcome = self._fetch_market_resolution(market)
+        if outcome is None:
             logger.warning(
-                "Cannot get actual temp for %s, skipping", market.id
+                "Market %s not yet resolved by Polymarket, will retry",
+                market.id,
             )
-            return None
-
-        strike = float(market.threshold or 0)
-
-        # Determine outcome: YES wins if temp exceeds strike (HIGH/MAX market)
-        if "LOW" in str(market.market_type or "").upper():
-            outcome_yes = actual_temp < strike
-        else:
-            # Default HIGH: YES wins if actual > strike
-            outcome_yes = actual_temp > strike
-
-        outcome = "YES" if outcome_yes else "NO"
+            return None  # pending, try again next cycle
 
         logger.info(
-            "Market %s: actual=%.1f, strike=%.1f, outcome=%s",
-            market.id, actual_temp, strike, outcome,
+            "Market %s resolved by Polymarket: outcome=%s",
+            market.id, outcome,
         )
 
+        # ── Settle bets ────────────────────────────────────────────────────
         total_market_pnl = 0.0
         any_settled = False
-        any_bet_won = False
+        bet_won_count = 0
+        bet_lost_count = 0
 
         for bet in open_bets:
-            bet_won = (bet.side == outcome)
+            bet_won = bet.side == outcome
             if bet_won:
-                any_bet_won = True
+                bet_won_count += 1
+            else:
+                bet_lost_count += 1
             bet.status = "won" if bet_won else "lost"
             bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -145,23 +157,23 @@ class SettlementEngine:
                 fee = payout * self.fee_rate
                 realized_pnl = payout - stake - fee
             else:
-                # Kaybeden bahisten Polymarket fee kesmez
                 realized_pnl = -stake
 
             bet.realized_pnl = round(realized_pnl, 2)
             bet.pnl = round(realized_pnl, 2)
-            bet.unrealized_pnl = 0.0  # Settled = no unrealized left
+            bet.unrealized_pnl = 0.0
             total_market_pnl += realized_pnl
             any_settled = True
 
-            # Update portfolio
-            portfolio = session.query(Portfolio).filter(
-                Portfolio.id == 1
-            ).first()
+            # Update portfolio via central accounting
+            from utils.accounting import credit_settlement
+
+            portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
             if portfolio:
                 if bet_won:
-                    portfolio.cash_balance = (
-                        (portfolio.cash_balance or 0) + payout - fee
+                    credit_settlement(
+                        session, payout, fee,
+                        f"settle:{bet.market_id}:won"
                     )
                     portfolio.total_won = (portfolio.total_won or 0) + 1
                 else:
@@ -171,56 +183,104 @@ class SettlementEngine:
                 )
 
         if any_settled:
-            market.status = "settled_win" if outcome_yes else "settled_loss"
-            market.resolution_data = json.dumps({
-                "actual_temperature": actual_temp,
-                "strike": strike,
-                "outcome": outcome,
-                "settled_at": datetime.now(timezone.utc).isoformat(),
-            })
+            market.status = "settled_win" if outcome == "YES" else "settled_loss"
+            # raw_data populated inside _fetch_market_resolution
 
-        return {"won": any_bet_won, "pnl": total_market_pnl}
+        return {"won": bet_won_count, "lost": bet_lost_count, "pnl": total_market_pnl}
 
-    def _get_actual_temperature(self, market) -> float | None:
-        """Fetch actual temperature from Open-Meteo historical API."""
-        try:
-            lat = market.latitude or 0
-            lon = market.longitude or 0
-            target_date = market.target_date
+    # ── Gamma API resolution ───────────────────────────────────────────────
 
-            if not lat or not lon or not target_date:
-                return None
+    def _fetch_market_resolution(self, market) -> str | None:
+        """Fetch market resolution from Polymarket Gamma API.
 
-            date_str = target_date.strftime("%Y-%m-%d")
+        Returns ``"YES"``, ``"NO"``, or ``None`` if not yet resolved.
 
-            url = "https://archive-api.open-meteo.com/v1/archive"
-            params = {
-                "latitude": lat,
-                "longitude": lon,
-                "start_date": date_str,
-                "end_date": date_str,
-                "daily": "temperature_2m_max,temperature_2m_min",
-                "temperature_unit": "celsius",
-                "timezone": "auto",
-            }
-
-            resp = requests.get(url, params=params, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-
-            daily = data.get("daily", {})
-            max_vals = daily.get("temperature_2m_max")
-            min_vals = daily.get("temperature_2m_min")
-
-            if max_vals and max_vals[0] is not None:
-                return float(max_vals[0])
-            if min_vals and min_vals[0] is not None:
-                return float(min_vals[0])
-
+        Resolution criteria (ALL must hold):
+          1. ``closed == true``
+          2. ``umaResolutionStatus == "resolved"``
+          3. ``outcomePrices`` is a parseable JSON string list
+        """
+        data = self._call_gamma_api(market)
+        if data is None:
             return None
 
-        except Exception as e:
+        if not data.get("closed") or data.get("umaResolutionStatus") != "resolved":
+            return None
+
+        prices = self._parse_outcome_prices(market, data.get("outcomePrices"))
+        if prices is None:
+            return None
+
+        try:
+            yes_price = float(prices[0])
+            no_price = float(prices[1])
+        except (TypeError, ValueError):
             logger.warning(
-                "Historical weather fetch failed for %s: %s", market.id, e
+                "Non-numeric outcomePrices for %s: %s", market.id, prices,
             )
             return None
+
+        if yes_price >= 0.99:
+            outcome = "YES"
+        elif no_price >= 0.99:
+            outcome = "NO"
+        else:
+            logger.warning(
+                "Split/no-clear resolution for %s: outcomePrices=%s "
+                "(neither side >= 0.99)",
+                market.id, prices,
+            )
+            return None
+
+        market.raw_data = json.dumps({
+            "source": "polymarket",
+            "outcome": outcome,
+            "outcomePrices": prices,
+            "umaResolutionStatus": data.get("umaResolutionStatus"),
+            "settled_at": datetime.now(timezone.utc).isoformat(),
+        })
+        return outcome
+
+    def _call_gamma_api(self, market) -> dict | None:
+        """Make GET request to Gamma API and return parsed JSON."""
+        try:
+            url = f"{GAMMA_API_BASE}/markets/{market.id}"
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            logger.warning(
+                "Gamma API request failed for %s: %s", market.id, e,
+            )
+            return None
+
+    @staticmethod
+    def _parse_outcome_prices(market, raw_prices) -> list | None:
+        """Parse outcomePrices into a validated list."""
+        if not raw_prices:
+            return None
+        try:
+            prices = json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(
+                "Cannot parse outcomePrices for %s: %s", market.id, raw_prices,
+            )
+            return None
+        if not isinstance(prices, (list, tuple)) or len(prices) < 2:
+            logger.warning(
+                "Invalid outcomePrices format for %s: %s", market.id, prices,
+            )
+            return None
+        return prices
+
+    # ── Helpers ────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _check_stale_pending(market, now_naive: datetime) -> None:
+        """Log an ERROR if a market has been pending longer than 48 hours."""
+        if market.target_date and (now_naive - market.target_date) > timedelta(hours=48):
+            logger.error(
+                "Market %s has been pending >48h (target=%s). "
+                "Gamma API may not have resolved it yet.",
+                market.id, market.target_date,
+            )

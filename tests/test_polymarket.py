@@ -1,6 +1,7 @@
 """Test cases for PolymarketScraper."""
 
 import pytest
+
 from scrapers.polymarket import PolymarketScraper
 
 

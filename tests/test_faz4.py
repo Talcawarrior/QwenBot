@@ -11,18 +11,22 @@ _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
 os.close(_db_fd)
 
 # Force database.db to use our temp path at module import time
-from config.settings import config as _cfg
+from config.settings import config as _cfg  # noqa: E402
+
 _cfg.DB_PATH = _db_path
 
 # database.db caches DB_PATH at module level; re-import ensures our override sticks
-import importlib
-import database.db
+import importlib  # noqa: E402
+
+import database.db  # noqa: E402
+
 importlib.reload(database.db)
 
-from database.db import init_db, get_session
+from database.db import get_session, init_db  # noqa: E402
+
 init_db()
 
-from database.models import Bet, WeatherMarket, Portfolio
+from database.models import Bet, Portfolio, WeatherMarket  # noqa: E402
 
 
 def _clean():

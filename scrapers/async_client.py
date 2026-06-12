@@ -25,7 +25,7 @@ import asyncio
 import logging
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
 
 try:  # aiohttp is in requirements.txt, but aiohttp-less CI must still work.
     import aiohttp  # type: ignore
@@ -53,7 +53,7 @@ _CACHE: dict[tuple, Any] = {}
 _CACHE_LOCK = threading.Lock()
 
 
-def _cache_key(url: str, params: Optional[dict]) -> tuple:
+def _cache_key(url: str, params: dict | None) -> tuple:
     if not params:
         return (url, ())
     return (url, tuple(sorted(params.items())))
@@ -102,11 +102,11 @@ def _throttle(host: str) -> None:
 
 # ---- Async core --------------------------------------------------------
 async def _async_fetch_one(
-    session: "aiohttp.ClientSession",
+    session: aiohttp.ClientSession,
     sem: asyncio.Semaphore,
     host: str,
     url: str,
-    params: Optional[dict],
+    params: dict | None,
 ) -> Any:
     """Issue one GET, returning the parsed JSON body or None on failure.
 
@@ -149,13 +149,13 @@ class AsyncHttpClient:
 
     def __init__(self, max_concurrent: int = MAX_CONCURRENT) -> None:
         self.max_concurrent = max_concurrent
-        self._session: Optional["aiohttp.ClientSession"] = None
+        self._session: aiohttp.ClientSession | None = None
         self._session_lock = threading.Lock()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._loop_lock = threading.Lock()
 
     # ---- session management -------------------------------------------
-    def _ensure_session(self) -> "aiohttp.ClientSession":
+    def _ensure_session(self) -> aiohttp.ClientSession:
         if not _HAS_AIOHTTP:
             raise RuntimeError("aiohttp is not installed")
         with self._session_lock:
@@ -183,7 +183,7 @@ class AsyncHttpClient:
 
     # ---- async primitives ---------------------------------------------
     async def _afetch(
-        self, items: list[tuple[str, Optional[dict], str]]
+        self, items: list[tuple[str, dict | None, str]]
     ) -> list[Any]:
         """Run all (url, params, host) items in parallel, preserving order.
 
@@ -217,7 +217,7 @@ class AsyncHttpClient:
 
     # ---- sync entry points --------------------------------------------
     def fetch_one_blocking(
-        self, url: str, params: Optional[dict] = None, host: str = ""
+        self, url: str, params: dict | None = None, host: str = ""
     ) -> Any:
         """Synchronous fetch with cache + throttle. Returns parsed JSON or None.
 
@@ -234,7 +234,7 @@ class AsyncHttpClient:
         return asyncio.run(self._afetch_one_async(url, params, host, key))
 
     async def _afetch_one_async(
-        self, url: str, params: Optional[dict], host: str, key: tuple
+        self, url: str, params: dict | None, host: str, key: tuple
     ) -> Any:
         results = await self._afetch([(url, params, host)])
         value = results[0] if results else None
@@ -242,7 +242,7 @@ class AsyncHttpClient:
         return value
 
     def _sync_fetch(
-        self, url: str, params: Optional[dict], host: str, key: tuple
+        self, url: str, params: dict | None, host: str, key: tuple
     ) -> Any:
         if host:
             _throttle(host)
@@ -264,7 +264,7 @@ class AsyncHttpClient:
         return value
 
     def fetch_many(
-        self, items: list[tuple[str, Optional[dict], str]]
+        self, items: list[tuple[str, dict | None, str]]
     ) -> list[Any]:
         """Parallel batch fetch with cache + throttle, preserving order.
 
@@ -277,7 +277,7 @@ class AsyncHttpClient:
             return []
         # First pass: serve cache hits, leave the rest in their original
         # index so we can rebuild the ordered result.
-        pending: list[tuple[int, tuple[str, Optional[dict], str]]] = []
+        pending: list[tuple[int, tuple[str, dict | None, str]]] = []
         out: list[Any] = [None] * len(items)
         for idx, (url, params, host) in enumerate(items):
             key = _cache_key(url, params)

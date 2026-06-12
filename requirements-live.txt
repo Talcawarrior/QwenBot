@@ -1,0 +1,4 @@
+# Live trading dependencies — install INSTEAD of requirements.txt
+# when running in production with real Polymarket orders.
+# See requirements.txt for the rationale.
+py-clob-client>=0.34

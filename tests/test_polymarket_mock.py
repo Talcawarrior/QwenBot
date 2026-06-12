@@ -2,6 +2,7 @@
 
 import unittest
 from datetime import datetime
+
 from scrapers.polymarket import PolymarketScraper
 
 

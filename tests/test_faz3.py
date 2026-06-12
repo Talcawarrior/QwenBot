@@ -2,18 +2,20 @@
 
 import os
 import tempfile
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Point to a temp DB for fresh tables
 _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
 os.close(_db_fd)
-from config.settings import config as _cfg
+from config.settings import config as _cfg  # noqa: E402
+
 _cfg.DB_PATH = _db_path
 
-from database.db import init_db
+from database.db import init_db  # noqa: E402
+
 init_db()
 
-from config.settings import config, bot_config
+from config.settings import bot_config, config  # noqa: E402
 
 
 def test_fee_drag():
@@ -45,7 +47,7 @@ def test_kelly_bankroll():
     """Test 3: Calculator reads bankroll from DB."""
     # Set portfolio to $2000
     from database.db import get_session
-    from database.models import Portfolio, WeatherMarket, WeatherForecast, Analysis
+    from database.models import Analysis, Portfolio, WeatherForecast, WeatherMarket
     from engine.calculator import Calculator
 
     with get_session() as session:
@@ -106,8 +108,9 @@ def test_kelly_bankroll():
 
 def test_sia_status():
     """Test 4: SIALoop uses 'won'/'lost' not 'settled'."""
-    from engine.strategy import SIALoop
     import inspect
+
+    from engine.strategy import SIALoop
     src = inspect.getsource(SIALoop.analyze_model_performance)
     assert '"won"' in src, "Missing 'won' in status filter"
     assert '"lost"' in src, "Missing 'lost' in status filter"
@@ -118,20 +121,21 @@ def test_sia_status():
 
 
 def test_sia_brier_input():
-    """Test 5: SIALoop uses fair_value (probability), not expected_value (edge)."""
-    from engine.strategy import SIALoop
+    """Test 5: SIALoop uses per-model probability (model_probs), not expected_value."""
     import inspect
+
+    from engine.strategy import SIALoop
     src = inspect.getsource(SIALoop.analyze_model_performance)
-    assert "fair_value" in src, "Missing fair_value in Brier input"
-    # Verify the Brier prediction source line uses fair_value, not expected_value
-    # (expected_value is an ORM field on Bet model — it appears elsewhere legitimately)
-    assert "pred = getattr(bet, \"fair_value\", None)" in src, (
-        "Brier input should use fair_value (probability), not expected_value (edge)"
+    assert "model_probs" in src, "Missing model_probs in Brier calculation"
+    # Verify Brier uses _resolve_market_outcome (market resolution), not bet.status
+    assert "_resolve_market_outcome" in src, (
+        "Brier should use market resolution outcome, not bet.status"
     )
-    assert "expected_value" not in [line for line in src.split("\n") if "pred =" in line][0], (
-        "The prediction line should not reference expected_value"
+    # Ensure Bet.fair_value is NOT the Brier prediction input
+    assert "bet.fair_value" not in src, (
+        "Brier should not use bet.fair_value; uses per-model probs from analysis"
     )
-    print("✅ Test 5: SIALoop uses fair_value for Brier score")
+    print("✅ Test 5: SIALoop uses per-model probability for Brier score")
 
 
 def test_ladder_pending():
@@ -151,8 +155,9 @@ def test_ladder_pending():
 
 def test_exposure_query():
     """Test 7: RiskManager.get_total_exposure uses Bet.amount."""
-    from engine.strategy import RiskManager
     import inspect
+
+    from engine.strategy import RiskManager
     src = inspect.getsource(RiskManager.get_total_exposure)
     assert "Bet.amount" in src, "Missing Bet.amount in exposure query"
     print("✅ Test 7: RiskManager uses Bet.amount for exposure")

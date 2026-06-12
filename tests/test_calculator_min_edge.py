@@ -6,7 +6,7 @@ stalled for 6+ hours with AttributeError on every scan cycle. This
 test guards the Calculator side of the same logic so the same
 mistake can't be made again on the other class.
 """
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from config.settings import bot_config

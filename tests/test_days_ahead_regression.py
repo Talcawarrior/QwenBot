@@ -14,8 +14,8 @@ The fix:
 These tests pin both behaviors so they cannot regress silently.
 """
 
-import sys
 import inspect
+import sys
 
 sys.path.insert(0, ".")
 

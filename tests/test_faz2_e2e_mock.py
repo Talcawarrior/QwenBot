@@ -11,24 +11,25 @@ Tests the full pipeline:
 
 import os
 import tempfile
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Point to a temporary DB path so we get fresh tables with all columns
 _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
 os.close(_db_fd)  # close fd, we only need the path
 
 # Override config.DB_PATH before any db module is imported
-from config.settings import config as _cfg
+from config.settings import config as _cfg  # noqa: E402
+
 _cfg.DB_PATH = _db_path
 
-from database.db import init_db, get_session
+from database.db import get_session, init_db  # noqa: E402
 
 # Create tables fresh (will have market_type, model_weight columns)
 init_db()
 
-from database.models import WeatherMarket, WeatherForecast, Analysis, Bet, Portfolio
-from engine.calculator import Calculator
-from config import settings
+from config import settings  # noqa: E402
+from database.models import Analysis, Bet, Portfolio, WeatherForecast, WeatherMarket  # noqa: E402
+from engine.calculator import Calculator  # noqa: E402
 
 
 def test_analysis_via_metric_map():
@@ -191,8 +192,9 @@ def test_betplacer_status_consistency():
 
 def test_scheduler_uses_calculator():
     """Verify scheduler uses Calculator, not BettingEngine."""
-    import jobs.scheduler as scheduler
     import inspect
+
+    import jobs.scheduler as scheduler
     src = inspect.getsource(scheduler.run_analyze)
     assert "from engine.calculator import Calculator" in src, (
         "❌ scheduler.run_analyze does not import Calculator!"

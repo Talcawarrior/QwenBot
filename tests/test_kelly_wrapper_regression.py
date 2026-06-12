@@ -18,6 +18,7 @@ These tests pin the contract:
   produces a positive Kelly fraction, not zero.
 """
 import pytest
+
 from engine.calculator import Calculator
 
 

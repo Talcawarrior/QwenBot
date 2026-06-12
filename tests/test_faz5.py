@@ -5,25 +5,27 @@ Faz 5 tests: end-to-end place bets pipeline (mock).
 import json
 import os
 import tempfile
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 # --- Override DB path BEFORE any project import ---
 _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
 os.close(_db_fd)
 
-from config.settings import config as _cfg
+from config.settings import config as _cfg  # noqa: E402
+
 _cfg.DB_PATH = _db_path
 
-import importlib
-import database.db
+import importlib  # noqa: E402
+
+import database.db  # noqa: E402
+
 importlib.reload(database.db)
 
-from database.db import init_db, get_session
+from database.db import get_session, init_db  # noqa: E402
+
 init_db()
 
-from database.models import (
-    Bet, WeatherMarket, WeatherForecast, Analysis, Portfolio
-)
+from database.models import Analysis, Bet, Portfolio, WeatherForecast, WeatherMarket  # noqa: E402
 
 
 def _clean():
@@ -180,16 +182,20 @@ def test_ladder_data_json():
                 assert level["status"] in ("filled", "pending"), (
                     f"Bad status: {level['status']}"
                 )
-            # After placement, all 3 levels start as 'pending'
-            # (run_update_prices fills them when triggers hit)
-            assert ladder[0]["status"] == "pending", (
-                f"Level 1 should be pending: {ladder[0]}"
+            # L1 is immediately 'filled' at placement (Bug B fix — prevents
+            # double-debit in run_update_prices). L2/L3 remain pending.
+            assert ladder[0]["status"] == "filled", (
+                f"Level 1 should be filled: {ladder[0]}"
             )
             assert ladder[1]["status"] == "pending", (
                 f"Level 2 should be pending: {ladder[1]}"
             )
             assert ladder[2]["status"] == "pending", (
                 f"Level 3 should be pending: {ladder[2]}"
+            )
+            # L1 should also have a filled_at timestamp
+            assert ladder[0].get("filled_at") is not None, (
+                "Level 1 missing filled_at"
             )
     finally:
         _clean()

@@ -1,9 +1,10 @@
 """Piyasa sorusunu çözümleyen parser modülü (Regex & Kural tabanlı)."""
 
-import re
 import logging
+import re
 from datetime import datetime
-from config.settings import config
+
+from config.settings import Config, config
 from database.db import get_session
 from database.models import WeatherMarket
 
@@ -130,33 +131,120 @@ class MarketParser:
                 return self.CITY_ALIASES.get(city, city)
         return None
 
-    def _extract_threshold(self, question: str) -> tuple[float, str] | None:
-        """Sıcaklık eşiğini bul."""
+    @staticmethod
+    def _resolve_unit(question: str, city: str | None) -> str:
+        """Birim tespiti: 1) açık birim regex'i, 2) şehre göre (K→ICAO=US→°F),
+        3) varsayılan Celsius.
+
+        US şehirleri Polymarket'ta °F, uluslararası °C konvansiyonundadır.
+        """
+        # 1) Açık birim varsa (°F / °C / Fahrenheit / Celsius, sayıya bitişik)
+        explicit = re.search(
+            r'(?:\d\s*°?\s*[Ff](?:ahrenheit)?|°[Ff]|'
+            r'\d\s*°?\s*[Cc](?:elsius)?|°[Cc])',
+            question,
+        )
+        if explicit:
+            unit_text = explicit.group(0).upper()
+            if 'F' in unit_text:
+                return 'fahrenheit'
+            return 'celsius'
+
+        # 2) Birim yoksa, şehre göre karar ver
+        if city:
+            for alias, icao in Config.CITY_ICAO_MAP.items():
+                if alias.lower() in city.lower():
+                    # US/territory ICAO'ları K ile başlar
+                    return 'fahrenheit' if icao.upper().startswith('K') else 'celsius'
+
+        # 3) Varsayılan
+        return 'celsius'
+
+    def _extract_threshold(
+        self, question: str
+    ) -> tuple[float, str, float | None, float | None] | None:
+        """Sıcaklık eşiğini ve varsa aralığı bul.
+
+        Returns
+        -------
+        tuple (value_celsius, unit, low_c, high_c) or None
+            value_celsius: Celsius'a dönüşmüş ana eşik (tek değer veya aralığın ortası).
+            unit: her zaman "celsius".
+            low_c / high_c: "between A-B°F/°C" kalıbı için alt/üst sınır (°C).
+        """
+        city = self._extract_city(question)
+
+        # ── 1) Aralık kalıbı (range): "between A-B°F/°C"
+        range_match = re.search(
+            r'between\s+(\d+\.?\d*)\s*[-–]\s*(\d+\.?\d*)\s*°?\s*([FfCc]?)',
+            question,
+            re.IGNORECASE,
+        )
+        if range_match:
+            try:
+                low_val = float(range_match.group(1))
+                high_val = float(range_match.group(2))
+                unit_char = range_match.group(3).lower() if range_match.group(3) else ''
+                # Birim belirtilmemişse şehre göre karar ver
+                is_f = unit_char == 'f' or (
+                    not unit_char
+                    and self._resolve_unit(question, city) == 'fahrenheit'
+                )
+                if is_f:
+                    low_c = round((low_val - 32) * 5 / 9, 1)
+                    high_c = round((high_val - 32) * 5 / 9, 1)
+                else:
+                    low_c = round(low_val, 1)
+                    high_c = round(high_val, 1)
+                mid = round((low_c + high_c) / 2, 1)
+                return (mid, 'celsius', low_c, high_c)
+            except ValueError:
+                pass
+
+        # ── 2) Açık birimli tek değer
         patterns = [
-            r'(\d+\.?\d*)\s*°?\s*[Ff](?:ahrenheit)?',
-            r'(\d+\.?\d*)\s*°?\s*[Cc](?:elsius)?',
+            (r'(\d+\.?\d*)\s*°?\s*[Ff](?:ahrenheit)?', 'fahrenheit'),
+            (r'(\d+\.?\d*)\s*°?\s*[Cc](?:elsius)?', 'celsius'),
+            (r'(\d+\.?\d*)\s*degrees?\s*[Ff]', 'fahrenheit'),
+            (r'(\d+\.?\d*)\s*degrees?\s*[Cc]', 'celsius'),
+        ]
+        for pattern, expected_unit in patterns:
+            match = re.search(pattern, question)
+            if match:
+                try:
+                    value = float(match.group(1))
+                    if expected_unit == 'fahrenheit':
+                        value_c = round((value - 32) * 5 / 9, 1)
+                    else:
+                        value_c = round(value, 1)
+                    return (value_c, 'celsius', None, None)
+                except ValueError:
+                    continue
+
+        # ── 3) Birimsiz sayı kalıpları (exceed, above, below, be, over, under)
+        unitless_patterns = [
             r'exceed\s+(\d+\.?\d*)',
             r'above\s+(\d+\.?\d*)',
             r'below\s+(\d+\.?\d*)',
             r'over\s+(\d+\.?\d*)',
             r'under\s+(\d+\.?\d*)',
-            r'be\s+(\d+\.?\d*)'
+            r'be\s+(\d+\.?\d*)',
         ]
+        detected_unit = self._resolve_unit(question, city)
 
-        for pattern in patterns:
+        for pattern in unitless_patterns:
             match = re.search(pattern, question, re.IGNORECASE)
             if match:
                 try:
                     value = float(match.group(1))
-                    unit = "fahrenheit" if "f" in pattern.lower() or "f" in question.lower() else "celsius"
-
-                    # Convert Fahrenheit to Celsius (only by unit, NOT by value)
-                    if unit == "fahrenheit":
-                        value_c = (value - 32) * 5 / 9
-                        return round(value_c, 1), "celsius"
-                    return round(value, 1), "celsius"
+                    if detected_unit == 'fahrenheit':
+                        value_c = round((value - 32) * 5 / 9, 1)
+                    else:
+                        value_c = round(value, 1)
+                    return (value_c, 'celsius', None, None)
                 except ValueError:
                     continue
+
         return None
 
     def _extract_date(self, question: str) -> datetime | None:
@@ -236,7 +324,11 @@ class MarketParser:
                         break
 
             if threshold_result:
-                market.threshold, market.threshold_unit = threshold_result
+                value_c, unit, low_c, high_c = threshold_result
+                market.threshold = value_c
+                market.threshold_unit = unit
+                market.threshold_low = low_c
+                market.threshold_high = high_c
             if target_date:
                 market.target_date = target_date
             market.metric = metric

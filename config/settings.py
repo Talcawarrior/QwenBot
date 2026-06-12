@@ -81,16 +81,39 @@ class StrategyConfig:
 
 
 @dataclass
+class RiskConfig:
+    """Active risk management: position-level stop-loss, take-profit, time decay, rebalance."""
+    # Position-level limits
+    stop_loss_pct: float = 0.30          # %30 kayıpta otomatik kapat
+    take_profit_pct: float = 1.0         # %100 karda otomatik kapat
+    trailing_stop_pct: float = 0.15      # %15 trailing stop (tepeden düşüşte)
+
+    # Time-based exits
+    time_decay_hours: int = 24           # Settlement'a bu kadar saat kala
+    time_decay_threshold: float = -0.10  # %10 zarardaysa kapat
+
+    # Rebalancing
+    min_rebalance_edge_ratio: float = 2.0   # Yeni edge en az 2x eski edge
+    max_city_positions: int = 3             # Şehir başına max pozisyon (rebalance)
+    rebalance_min_loss: float = -0.15       # Rebalance için min zarar eşiği
+
+    # Risk management loop interval (seconds)
+    risk_scan_interval: int = 300           # Her 5 dakikada bir tara
+
+
+@dataclass
 class BotConfig:
     """Combined configurations."""
     polymarket: PolymarketConfig = None
     meteo: MeteoConfig = None
     strategy: StrategyConfig = None
+    risk: RiskConfig = None
 
     def __post_init__(self):
         self.polymarket = self.polymarket or PolymarketConfig()
         self.meteo = self.meteo or MeteoConfig()
         self.strategy = self.strategy or StrategyConfig()
+        self.risk = self.risk or RiskConfig()
 
 
 # Main configuration class (kept for backward compatibility with older components & tests)

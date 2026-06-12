@@ -152,6 +152,8 @@ class Bet(Base):
 
     placed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     settled_at = Column(DateTime)
+    close_reason = Column(String, nullable=True)   # Early exit nedeni: "stop_loss", "take_profit", "time_decay", "rebalance"
+    closed_at = Column(DateTime, nullable=True)    # Early exit zamanı
 
 
 class Portfolio(Base):

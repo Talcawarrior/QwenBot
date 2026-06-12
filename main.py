@@ -466,12 +466,14 @@ async def websocket_endpoint(websocket: WebSocket):
         if websocket in state.websocket_clients: state.websocket_clients.remove(websocket)
 
 async def scan_and_bet_loop():
-    from jobs.scheduler import run_fetch_markets, run_parse_markets, run_fetch_weather, run_analyze, run_place_bets, run_update_prices
+    from jobs.scheduler import run_fetch_markets, run_parse_markets, run_fetch_weather, run_analyze, run_place_bets, run_update_prices, run_risk_management
     while state.is_running:
         try:
             await asyncio.to_thread(run_fetch_markets); await asyncio.to_thread(run_parse_markets)
             await asyncio.to_thread(run_fetch_weather); await asyncio.to_thread(run_analyze)
             await asyncio.to_thread(run_place_bets); await asyncio.to_thread(run_update_prices)
+            # Aktif risk yönetimi: stop-loss, take-profit, time-decay, trailing stop
+            await asyncio.to_thread(run_risk_management)
         except Exception as e: logger.error("Scan error: %s", e)
         await asyncio.sleep(state.config.SCAN_INTERVAL)
 

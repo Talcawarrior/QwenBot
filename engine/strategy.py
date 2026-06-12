@@ -216,6 +216,243 @@ class RiskManager:
         except Exception as e:
             logger.warning("Risk load from DB warning: %s", e)
 
+    # ──────────────────────────────────────────────
+    # Active Risk Management — Position-Level Methods
+    # ──────────────────────────────────────────────
+    # These methods evaluate individual positions for early exit (stop-loss,
+    # take-profit, time decay, trailing stop) and portfolio rebalancing.
+    #
+    # risk_config comes from bot_config.risk (RiskConfig dataclass in settings.py)
+
+    def _get_risk_config(self):
+        """Return risk config with fallback defaults."""
+        try:
+            from config.settings import bot_config
+            return bot_config.risk
+        except Exception:
+            from config.settings import RiskConfig
+            return RiskConfig()
+
+    def check_stop_loss(self, bet, current_price: float, market=None) -> tuple:
+        """Stop-loss: pozisyon %stop_loss_pct'den fazla zarardaysa kapat.
+
+        PnL hesaplaması: (current_price - entry_price) / entry_price
+        Returns: (should_exit: bool, reason: str)
+        """
+        cfg = self._get_risk_config()
+        entry = float(bet.entry_price) if bet.entry_price is not None else (float(bet.price) if bet.price is not None else 0.0)
+        if entry <= 0:
+            return False, ""
+        loss_pct = (current_price - entry) / entry
+        if loss_pct <= -cfg.stop_loss_pct:
+            return True, f"stop_loss: {loss_pct:.1%}"
+        return False, ""
+
+    def check_take_profit(self, bet, current_price: float, market=None) -> tuple:
+        """Take-profit: pozisyon %take_profit_pct'den fazla kardaysa realize et."""
+        cfg = self._get_risk_config()
+        entry = float(bet.entry_price) if bet.entry_price is not None else (float(bet.price) if bet.price is not None else 0.0)
+        if entry <= 0:
+            return False, ""
+        profit_pct = (current_price - entry) / entry
+        if profit_pct >= cfg.take_profit_pct:
+            return True, f"take_profit: {profit_pct:.1%}"
+        return False, ""
+
+    def check_time_decay(self, bet, current_price: float, market) -> tuple:
+        """Time decay: settlement'a <time_decay_hours kala ve zarardaysa kapat."""
+        cfg = self._get_risk_config()
+        if not market or not hasattr(market, 'resolution_date'):
+            return False, ""
+        try:
+            resolution = market.resolution_date
+            if not resolution:
+                return False, ""
+            # Naive datetime'leri timezone-aware yap
+            if resolution.tzinfo is None:
+                resolution = resolution.replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            hours_left = (resolution - now).total_seconds() / 3600
+            if hours_left <= 0:
+                return False, ""  # Zaten geçmiş, settlement halleder
+            if hours_left <= cfg.time_decay_hours:
+                entry = float(bet.entry_price) if bet.entry_price is not None else (float(bet.price) if bet.price is not None else 0.0)
+                if entry > 0:
+                    loss_pct = (current_price - entry) / entry
+                    if loss_pct <= cfg.time_decay_threshold:
+                        return True, f"time_decay: {hours_left:.1f}h left, {loss_pct:.1%}"
+        except Exception:
+            pass
+        return False, ""
+
+    def check_trailing_stop(self, bet, current_price: float) -> tuple:
+        """Trailing stop: en yüksek fiyattan %trailing_stop_pct düşüşte kapat.
+
+        En yüksek fiyatı Bet.result_data'da 'peak_price' olarak saklar.
+        """
+        cfg = self._get_risk_config()
+        entry = float(bet.entry_price) if bet.entry_price is not None else (float(bet.price) if bet.price is not None else 0.0)
+        if entry <= 0:
+            return False, ""
+
+        # Peak price'ı result_data'dan oku veya ilk defa set et
+        peak = entry
+        if bet.result_data:
+            try:
+                data = json.loads(bet.result_data) if isinstance(bet.result_data, str) else {}
+                peak = float(data.get("peak_price", entry))
+            except Exception:
+                peak = entry
+
+        # Yeni tepe noktası var mı?
+        if current_price > peak:
+            peak = current_price
+            # Güncellenmiş peak değerini kaydet
+            try:
+                data = json.loads(bet.result_data) if isinstance(bet.result_data, str) else {}
+                if not isinstance(data, dict):
+                    data = {}
+                data["peak_price"] = peak
+                bet.result_data = json.dumps(data)
+            except Exception:
+                pass
+
+        # Tepeden düşüş kontrolü
+        if peak > 0:
+            drop_pct = (peak - current_price) / peak
+            if drop_pct >= cfg.trailing_stop_pct:
+                return True, f"trailing_stop: dropped {drop_pct:.1%} from peak {peak:.3f}"
+
+        return False, ""
+
+    def check_early_exit(self, bet, current_price: float, market=None) -> tuple:
+        """Tüm erken çıkış kontrollerini sırayla çalıştır.
+
+        Returns: (should_exit: bool, reason: str)
+        """
+        # 1. Stop-loss
+        exit_bool, reason = self.check_stop_loss(bet, current_price, market)
+        if exit_bool:
+            return True, reason
+
+        # 2. Take-profit
+        exit_bool, reason = self.check_take_profit(bet, current_price, market)
+        if exit_bool:
+            return True, reason
+
+        # 3. Trailing stop
+        exit_bool, reason = self.check_trailing_stop(bet, current_price)
+        if exit_bool:
+            return True, reason
+
+        # 4. Time decay (sadece market objesi varsa)
+        if market is not None:
+            exit_bool, reason = self.check_time_decay(bet, current_price, market)
+            if exit_bool:
+                return True, reason
+
+        return False, "Hold"
+
+    def check_rebalance(self, new_signal, active_bets: list) -> object:
+        """Yeni yüksek-edge fırsatı için eski pozisyonu kapatmaya değer mi?
+
+        Returns: Kapatılacak Bet nesnesi veya None
+        """
+        cfg = self._get_risk_config()
+        new_edge = getattr(new_signal, 'edge', 0.0) or (isinstance(new_signal, dict) and new_signal.get('edge', 0.0))
+
+        for bet in active_bets:
+            # Bet edge'ini fair_value - entry_price'dan hesapla
+            bet_edge = float(getattr(bet, 'expected_value', 0) or 0)
+            bet_pnl = float(getattr(bet, 'unrealized_pnl', 0) or 0)
+            bet_stake = float(getattr(bet, 'stake', bet.amount or 1))
+            bet_return_pct = bet_pnl / bet_stake if bet_stake > 0 else 0
+
+            # Yeni edge eski edge'in min_rebalance_edge_ratio katı mı?
+            if bet_edge > 0 and new_edge > bet_edge * cfg.min_rebalance_edge_ratio:
+                # Eski pozisyon zararda mı?
+                if bet_return_pct <= cfg.rebalance_min_loss:
+                    return bet
+
+        return None
+
+    def check_model_reversal(self, bet, analysis) -> tuple:
+        """Model olasılığı ters yönde önemli ölçüde değiştiyse erken çık.
+
+        Returns: (should_exit: bool, reason: str)
+        """
+        if not analysis:
+            return False, ""
+        try:
+            # Bet'in açıldığı andaki model prob'u fair_value'da saklı
+            entry_prob = float(getattr(bet, 'fair_value', 0.5) or 0.5)
+            current_prob = float(getattr(analysis, 'estimated_prob', 0.5) or 0.5)
+
+            if entry_prob <= 0 or current_prob <= 0:
+                return False, ""
+
+            prob_change = current_prob - entry_prob
+            bet_pnl = float(getattr(bet, 'unrealized_pnl', 0) or 0)
+            bet_stake = float(getattr(bet, 'stake', bet.amount or 1))
+            return_pct = bet_pnl / bet_stake if bet_stake > 0 else 0
+
+            # Model prob'u %20+ ters yönde değiştiyse ve zarardaysak çık
+            if prob_change <= -0.20 and return_pct <= -0.10:
+                return True, f"model_reversal: prob {entry_prob:.0%}->{current_prob:.0%} ({prob_change:.0%})"
+
+            # Model prob'u %30+ ters yönde değiştiyse (karda da olsak çık)
+            if prob_change <= -0.30:
+                return True, f"model_reversal: prob {entry_prob:.0%}->{current_prob:.0%} ({prob_change:.0%})"
+
+        except Exception:
+            pass
+        return False, ""
+
+    def calculate_position_size_with_risk(self, signal, portfolio_value: float) -> float:
+        """Kelly + risk limitleri ile pozisyon boyutu hesapla.
+
+        Akış:
+        1. Kelly criterion ile ideal boyut
+        2. max_bet_pct (%3) sınırı
+        3. Smart pool (%40 dokunulmaz)
+        4. Exposure cap (%25)
+        5. City cap kontrolü
+        """
+        model_prob = getattr(signal, 'probability',
+                     getattr(signal, 'model_prob',
+                     (signal.get('model_prob') if isinstance(signal, dict) else 0.5)))
+        market_price = getattr(signal, 'entry_price',
+                       (signal.get('entry_price') if isinstance(signal, dict) else 0.5))
+
+        if model_prob is None or model_prob <= 0 or market_price is None or market_price <= 0:
+            return 0.0
+
+        # 1. Kelly — use passed portfolio_value, not self.portfolio_value
+        kelly_size = kelly_bet_amount(
+            portfolio_value,
+            model_prob,
+            market_price,
+            fraction=self.config.KELLY_FRACTION,
+            min_bet=self.config.MIN_BET_SIZE,
+            max_bet_pct=self.config.MAX_BET_PCT,
+        )
+
+        # 2. Max bet %3
+        max_bet = portfolio_value * self.config.MAX_BET_PCT
+        kelly_size = min(kelly_size, max_bet)
+
+        # 3. Smart pool (%40 dokunulmaz)
+        available = portfolio_value * (1.0 - self.config.SMART_POOL_PCT)
+        kelly_size = min(kelly_size, available)
+
+        # 4. Exposure cap
+        current_exposure = self.get_total_exposure()
+        max_exposure = portfolio_value * self.config.TOTAL_EXPOSURE_PCT
+        remaining_cap = max(0, max_exposure - current_exposure)
+        kelly_size = min(kelly_size, remaining_cap)
+
+        return max(kelly_size, self.config.MIN_BET_SIZE)
+
 
 class BettingEngine:
     """Signal analysis, ladder betting, and position management."""

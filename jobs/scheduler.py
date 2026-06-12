@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 from sqlalchemy import func
 from database.db import get_session
-from database.models import Bet, WeatherMarket, Portfolio
+from database.models import Bet, WeatherMarket, Portfolio, Analysis
 
 logger = logging.getLogger("JOBS_SCHEDULER")
 
@@ -219,6 +219,89 @@ def run_report():
         )
         logger.info(report)
         return report
+
+
+def run_risk_management():
+    """Aktif risk yönetimi: stop-loss, take-profit, time-decay, trailing stop kontrolleri.
+
+    Her açık bahsi tara, RiskManager.check_early_exit ile kontrol et,
+    erken çıkılması gereken pozisyonları kapat.
+    """
+    from engine.strategy import RiskManager
+    from config.settings import bot_config
+
+    with get_session() as session:
+        rm = RiskManager(db_session=session, cfg=bot_config)
+        open_statuses = ("active", "open", "placed", "pending")
+        bets = session.query(Bet).filter(Bet.status.in_(open_statuses)).all()
+
+        if not bets:
+            return "Risk: no open positions"
+
+        # Pre-fetch market prices
+        market_ids = list(set(b.market_id for b in bets if b.market_id))
+        markets = {}
+        if market_ids:
+            for m in session.query(WeatherMarket).filter(WeatherMarket.id.in_(market_ids)).all():
+                markets[m.id] = m
+
+        closed_count = 0
+        for bet in bets:
+            market = markets.get(bet.market_id)
+            if not market:
+                continue
+
+            # Current price in side terms
+            yes_price = float(market.yes_price or 0.5)
+            if bet.side and bet.side.upper() == "NO":
+                current_price = max(0.0, min(1.0, 1.0 - yes_price))
+            else:
+                current_price = max(0.0, min(1.0, yes_price))
+
+            # Check early exit
+            should_exit, reason = rm.check_early_exit(bet, current_price, market)
+
+            # Check model reversal if analysis exists
+            if not should_exit:
+                analysis = session.query(Analysis).filter(
+                    Analysis.market_id == bet.market_id
+                ).order_by(Analysis.analyzed_at.desc()).first()
+                rev_exit, rev_reason = rm.check_model_reversal(bet, analysis)
+                if rev_exit:
+                    should_exit, reason = True, rev_reason
+
+            if should_exit:
+                # Close position: mark as closed with loss/profit
+                entry = float(bet.entry_price or bet.price or 0.0)
+                shares = float(bet.shares or 0.0)
+                realized = round(shares * (current_price - entry), 2)
+
+                bet.status = "closed_early"
+                bet.close_reason = reason
+                bet.closed_at = datetime.now(timezone.utc)
+                bet.realized_pnl = realized
+                bet.pnl = realized
+                bet.current_price = current_price
+
+                # Update portfolio cash
+                portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
+                if portfolio:
+                    portfolio.cash_balance = (portfolio.cash_balance or 0.0) + realized
+                    portfolio.total_value = round(
+                        (portfolio.cash_balance or 0.0) + float(realized), 2
+                    )
+                    portfolio.last_updated = datetime.now(timezone.utc)
+
+                session.add(bet)
+                session.add(portfolio) if portfolio else None
+                closed_count += 1
+                logger.info(
+                    "Early exit bet=%s market=%s reason=%s realized=$%.2f",
+                    bet.id, bet.market_id, reason, realized,
+                )
+
+        session.commit()
+        return f"Risk: {closed_count} position(s) closed early"
 
 
 def start_scheduler():

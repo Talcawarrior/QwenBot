@@ -231,7 +231,7 @@ class Calculator:
                 (market.liquidity or 0) >= bot_config.strategy.min_liquidity
                 or bot_config.strategy.min_liquidity <= 0
             )
-            effective_min_edge = self._compute_effective_min_edge(market)
+            effective_min_edge = self._compute_effective_min_edge(market, std_val)
             should_bet = (
                 abs(edge) >= effective_min_edge
                 and len(forecast_values) >= bot_config.strategy.min_sources
@@ -283,9 +283,9 @@ class Calculator:
 
 
     @staticmethod
-    def _compute_effective_min_edge(market) -> float:
+    def _compute_effective_min_edge(market, std: float | None = None) -> float:
         """Time-to-close-scaled min_edge. Delegates to utils.probability."""
-        return compute_effective_min_edge(market)
+        return compute_effective_min_edge(market, std=std)
 
 # WeatherEngine kept for seamless FastAPI / backward compatibility
 OPEN_METEO_MODEL_MAP = {
@@ -319,9 +319,9 @@ class WeatherEngine:
         self._forecast_cache = {}
 
     @staticmethod
-    def _compute_effective_min_edge(market) -> float:
+    def _compute_effective_min_edge(market, std: float | None = None) -> float:
         """Return the time-to-close-scaled min_edge. Delegates to utils.probability."""
-        return compute_effective_min_edge(market)
+        return compute_effective_min_edge(market, std=std)
 
 
     async def start(self):
@@ -423,7 +423,7 @@ class WeatherEngine:
                 return None
 
             # Calculate consensus
-            total_weight = sum(self.model_weights.get(m, 0.0) for m in model_temps.keys())
+            total_weight = sum(self.model_weights.get(m, 0.0) for m in model_temps)
             if total_weight == 0:
                 return None
             weighted_mean = sum(self.model_weights.get(m, 0.0) * t for m, t in model_temps.items()) / total_weight

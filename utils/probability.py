@@ -125,7 +125,7 @@ def estimate_probability(  # pylint: disable=too-many-arguments,too-many-positio
 # ── Time-to-close edge escalation ─────────────────────────────────────────────
 
 
-def compute_effective_min_edge(market) -> float:
+def compute_effective_min_edge(market, std: float | None = None) -> float:
     """Time-to-close-scaled min_edge for a market.
 
     Linearly ramps from 1x bot_config.strategy.min_edge at
@@ -133,33 +133,48 @@ def compute_effective_min_edge(market) -> float:
     edge_escalation_multiplier * min_edge at the moment of close.
     Clamps to the multiplier if we are already past resolution, and
     never divides by zero.
+
+    If *std* is provided and > 2.5, the base min_edge is doubled
+    (high-uncertainty guard for RANGE / high-spread markets).
     """
     from config.settings import bot_config
     s = bot_config.strategy
+
+    # High-uncertainty guard: if inter-model spread > 2.5C, double
+    # the min_edge requirement.
+    if std is not None and std > 2.5:
+        base = s.min_edge * 2.0
+        logger.info(
+            "High uncertainty guard: std=%.2f > 2.5, doubling min_edge to %.4f",
+            std, base,
+        )
+    else:
+        base = s.min_edge
+
     try:
         resolution = (
             getattr(market, 'resolution_date', None)
             or getattr(market, 'target_date', None)
         )
         if resolution is None:
-            return s.min_edge
+            return base
         now = datetime.now(timezone.utc)
         if getattr(resolution, 'tzinfo', None) is None:
             resolution = resolution.replace(tzinfo=timezone.utc)
         hours_left = (resolution - now).total_seconds() / 3600.0
     except Exception:
-        return s.min_edge
+        return base
 
     # 60s tolerance for the boundary: a market created with
     # resolution_date=now+esc_h drifts microseconds by the time the
     # function runs, producing 0.01+1e-9 on CI. A 1-minute window
     # makes the boundary deterministic.
     if hours_left >= s.edge_escalation_hours - (60.0 / 3600.0):
-        return s.min_edge
+        return base
     if hours_left <= 0:
-        return s.min_edge * s.edge_escalation_multiplier
+        return base * s.edge_escalation_multiplier
     esc_h = max(1, s.edge_escalation_hours)
     fraction = hours_left / esc_h
-    return s.min_edge * (
+    return base * (
         1.0 + (s.edge_escalation_multiplier - 1.0) * (1.0 - fraction)
     )

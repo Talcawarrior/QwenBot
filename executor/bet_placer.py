@@ -16,7 +16,7 @@ logger = logging.getLogger("EXECUTOR_BET_PLACER")
 
 
 class BetPlacer:
-    """SADECE bet aÃ§ar. Karar vermez - engine karar verir."""
+    """SADECE bet açar. Karar vermez - engine karar verir."""
 
     # Statuses that count as "open" for risk/exposure accounting.
     _OPEN_STATUSES = OPEN_BET_STATUSES
@@ -64,7 +64,7 @@ class BetPlacer:
 
 
     def place_bet(self, analysis_id: int) -> Bet | None:
-        """Analiz sonucuna gÃ¶re bet aÃ§."""
+        """Analiz sonucuna göre bet aç."""
         with get_session() as session:
             analysis = session.query(Analysis).filter_by(id=analysis_id).first()
             if not analysis or not analysis.should_bet:
@@ -97,7 +97,7 @@ class BetPlacer:
                 logger.debug(f"Market {market.id}: target_date passed, skipping")
                 return None
 
-            # Zaten bet aÃ§Ä±lmÄ±ÅŸ mÄ±?
+            # Zaten bet açılmış mı?
             existing = session.query(Bet).filter(
                 Bet.market_id == analysis.market_id,
                 Bet.status.in_(self._OPEN_STATUSES)
@@ -144,7 +144,7 @@ class BetPlacer:
             if proposed_amount > max_bet:
                 logger.warning(
                     f"Risk cap: Market {market.id} amount ${proposed_amount:.2f} "
-                    f"exceeds per-bet max ${max_bet:.2f} â€” clamping."
+                    f"exceeds per-bet max ${max_bet:.2f} — clamping."
                 )
                 proposed_amount = max_bet
 
@@ -162,7 +162,7 @@ class BetPlacer:
                     self.risk_manager.portfolio_value
                 ) * float(self.risk_manager.config.TOTAL_EXPOSURE_PCT)
                 logger.warning(
-                    f"Risk cap: Market {market.id} rejected â€” exposure would "
+                    f"Risk cap: Market {market.id} rejected — exposure would "
                     f"reach ${current_exposure + proposed_amount:.2f}, "
                     f"exceeding cap ${max_exposure:.2f}."
                 )
@@ -199,7 +199,7 @@ class BetPlacer:
             ) or 0
             if int(city_open_count) >= int(self.risk_manager.config.CITY_CAP):
                 logger.warning(
-                    f"Risk cap: Market {market.id} rejected â€” city cap "
+                    f"Risk cap: Market {market.id} rejected — city cap "
                     f"({city_open_count}/{self.risk_manager.config.CITY_CAP}) "
                     f"reached for {market.city}."
                 )
@@ -228,7 +228,7 @@ class BetPlacer:
             # Shares = amount / price (position size in contracts)
             shares = (proposed_amount / fill_price) if fill_price > 0 else 0.0
 
-            # Bet objesi oluÅŸtur
+            # Bet objesi oluştur
             fair_value = float(analysis.estimated_probability or 0.5)
             bet = Bet(
                 market_id=analysis.market_id,
@@ -353,10 +353,10 @@ class BetPlacer:
         for token in tokens:
             if token.get("outcome", "").upper() == side.upper():
                 return token.get("token_id")
-        raise ValueError(f"Token ID bulunamadÄ±: {side}")
+        raise ValueError(f"Token ID bulunamadı: {side}")
 
     def place_all_pending(self) -> int:
-        """should_bet=True olan tÃ¼m analizler iÃ§in bet aÃ§."""
+        """should_bet=True olan tüm analizler için bet aç."""
         placed = 0
         with get_session() as session:
             pending = session.query(Analysis).filter(
@@ -383,8 +383,7 @@ class BetPlacer:
                 if bet is not None:
                     placed += 1
             except Exception as e:
-                logger.error(f"Bet hatasÄ± (analysis {aid}): {e}")
+                logger.error(f"Bet hatası (analysis {aid}): {e}")
                 continue
 
         return placed
-

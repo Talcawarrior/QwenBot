@@ -24,7 +24,8 @@ def test_no_literal_open_status_tuples():
     violations = []
 
     # Skip the definition file (database/models.py) and this test file itself
-    skip_files = {"database\\models.py", "tests\\test_status_constants.py"}
+    # Use os.path.normpath for cross-platform path comparison
+    skip_files = {os.path.normpath("database/models.py"), os.path.normpath("tests/test_status_constants.py")}
 
     for root, _dirs, files in os.walk(project_root):
         # Skip venv and __pycache__

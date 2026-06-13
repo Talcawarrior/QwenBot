@@ -1,3 +1,9 @@
+"""FastAPI application for QwenBot — Polymarket weather betting bot.
+
+Provides REST API endpoints for status, markets, signals, history, cleanup,
+and WebSocket push. The bot runs fetch → parse → forecast → analyze →
+place → settle cycles at configurable intervals.
+"""
 
 import argparse
 import asyncio
@@ -320,7 +326,7 @@ async def get_bets(status: str = "", limit: int = 100, offset: int = 0):
     """Get all bets with optional status filter and pagination.
 
     Query params:
-      status  (str, optional)  — comma-separated list of statuses to filter by.
+      status  (str, optional)  -- comma-separated list of statuses to filter by.
                                 Omitting returns ALL statuses.
       limit   (int, default 100)
       offset  (int, default 0)
@@ -371,6 +377,7 @@ def _safe_parse_ladder(raw):
 
 @app.get("/api/signals")
 async def get_signals():
+    """Get all currently active (open) bets with live edge/price data."""
     db = get_db_session()
     try:
         active_bets = db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).all()
@@ -418,6 +425,7 @@ async def get_signals():
 
 @app.get("/api/history")
 async def get_history():
+    """Get settled bet history with win/loss stats."""
     db = get_db_session()
     try:
         settled_bets = (
@@ -454,6 +462,7 @@ async def get_history():
 
 @app.post("/api/cleanup")
 async def cleanup_old_data():
+    """Cancel stale open bets and refund their stakes (ladder-aware)."""
     db = get_db_session()
     try:
         _ts = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -468,9 +477,22 @@ async def cleanup_old_data():
         for bet in stale_bets:
             bet.status = "cancelled"
             bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            portfolio = db.query(Portfolio).filter(Portfolio.id == 1).first()
-            if portfolio:
-                portfolio.cash_balance = (portfolio.cash_balance or 0.0) + float(bet.amount or 0.0)
+
+            # Calculate the actual debited amount — for ladder bets only
+            # filled rungs were debited; for flat bets the full amount.
+            from utils.accounting import credit_sale
+            ladder = _safe_parse_ladder(bet.ladder_data)
+            if ladder:
+                filled_amount = sum(
+                    float(rung.get("amount", 0))
+                    for rung in ladder
+                    if rung.get("status") == "filled"
+                )
+                refund_amount = filled_amount if filled_amount > 0 else float(bet.amount or 0)
+            else:
+                refund_amount = float(bet.amount or 0)
+
+            credit_sale(db, refund_amount, f"cleanup_refund:bet_{bet.id}")
             cancelled += 1
         db.commit()
         return {"deleted_analyses": stale_analyses, "cancelled_bets": cancelled}
@@ -479,6 +501,7 @@ async def cleanup_old_data():
 
 @app.post("/api/start")
 async def start_bot():
+    """Start the scan-and-bet and settlement background loops."""
     async with state.start_stop_lock:
         if state.is_running:
             return {"status": "already_running"}
@@ -490,6 +513,7 @@ async def start_bot():
 
 @app.post("/api/stop")
 async def stop_bot():
+    """Stop all background loops and cancel pending tasks."""
     async with state.start_stop_lock:
         state.is_running = False
         for t in list(state.tasks.values()):
@@ -559,6 +583,7 @@ async def websocket_endpoint(websocket: WebSocket):
             state.websocket_clients.remove(websocket)
 
 async def scan_and_bet_loop():
+    """Background loop: fetch, parse, forecast, analyze, place bets, manage risk."""
     from jobs.scheduler import (
         run_analyze,
         run_fetch_markets,
@@ -583,6 +608,7 @@ async def scan_and_bet_loop():
         await asyncio.sleep(state.config.SCAN_INTERVAL)
 
 async def settlement_loop():
+    """Background loop: run SIA optimization and settle resolved bets."""
     from jobs.scheduler import run_settle
     while state.is_running:
         try:
@@ -594,6 +620,7 @@ async def settlement_loop():
         await asyncio.sleep(state.config.SETTLEMENT_INTERVAL)
 
 def run_cli():
+    """CLI entry point: run, reset, fetch, parse, weather, analyze, bet, settle, report."""
     parser = argparse.ArgumentParser()
     parser.add_argument("command")
     args = parser.parse_args()

@@ -176,24 +176,24 @@ def test_betting_engine_ev_full():
     from engine.strategy import BettingEngine
     be = BettingEngine()
 
-    # Test with edge just above fee
+    # Test with edge above min_edge (0.15 from config)
     s1 = be.analyze_signal(
         {"yes_price": 0.70, "city_code": "KLGA"},
-        model_prob=0.80, side="YES",
+        model_prob=0.86, side="YES",
     )
-    # edge=0.10, ev=0.08 → eligible (ev>0, edge>=min_edge=0.01)
+    # edge=0.16, ev=0.14 → eligible (ev>0, edge>=min_edge=0.15)
     assert s1 is not None, "Should be eligible"
     assert s1["ev"] > 0, f"EV={s1['ev']}, expected positive"
 
-    # Test with edge below fee
+    # Test with edge below min_edge (0.15 from config)
     s2 = be.analyze_signal(
         {"yes_price": 0.70, "city_code": "KLGA"},
-        model_prob=0.71, side="YES",
+        model_prob=0.80, side="YES",
     )
-    # edge=0.01, ev=-0.01 → not eligible (ev must be > 0)
-    assert s2 is None, "Should NOT be eligible (ev < 0)"
+    # edge=0.10 < min_edge=0.15 → not eligible
+    assert s2 is None, "Should NOT be eligible (edge < 0.15)"
     print(f"✅ Test 9: EV pipeline OK — eligible edge={s1['edge']}->ev={s1['ev']}, "
-          f"rejected edge=0.01->ev=-0.01")
+          f"rejected edge=0.10->ev=0.08")
 
 
 if __name__ == "__main__":

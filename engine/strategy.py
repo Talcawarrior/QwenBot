@@ -233,7 +233,7 @@ class RiskManager:
             from config.settings import RiskConfig
             return RiskConfig()
 
-    def check_stop_loss(self, bet, current_price: float, market=None) -> tuple:
+    def check_stop_loss(self, bet, current_price: float, market=None) -> tuple:  # pylint: disable=unused-argument
         """Stop-loss: pozisyon %stop_loss_pct'den fazla zarardaysa kapat.
 
         PnL hesaplaması: (current_price - entry_price) / entry_price
@@ -249,7 +249,7 @@ class RiskManager:
             return True, f"stop_loss: {loss_pct:.1%}"
         return False, ""
 
-    def check_take_profit(self, bet, current_price: float, market=None) -> tuple:
+    def check_take_profit(self, bet, current_price: float, market=None) -> tuple:  # pylint: disable=unused-argument
         """Take-profit: pozisyon %take_profit_pct'den fazla kardaysa realize et."""
         cfg = self._get_risk_config()
         raw = bet.entry_price if bet.entry_price is not None else bet.price
@@ -786,7 +786,7 @@ class SIALoop:
             model_data: dict[str, list] = defaultdict(list)
             # model_data[model_name] = list of (predicted_prob, actual_yes)
 
-            for bet, analysis, market in settled_bets:
+            for _bet, analysis, market in settled_bets:
                 if analysis is None or not analysis.model_predictions:
                     continue  # skip bets without per-model predictions
 

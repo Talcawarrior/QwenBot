@@ -41,7 +41,7 @@ def test_status_endpoint_returns_known_shape(client):
         assert key in body, f"missing '{key}' in /api/status: {list(body.keys())}"
 
     p = body["portfolio"]
-    for key in ("initial", "current", "smart_pool"):
+    for key in ("initial", "current"):
         assert key in p, f"missing portfolio.{key}"
     assert isinstance(p["initial"], (int, float))
     assert p["initial"] > 0

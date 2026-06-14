@@ -127,9 +127,9 @@ This averages into positions at better prices during pullbacks.
 | Max bets per city | 4 | `CITY_CAP` |
 | Daily stop-loss | 5% | `DAILY_LOSS_LIMIT` |
 | Kelly fraction | 15% | `KELLY_FRACTION` |
-| Smart pool | 40% of capital | `SMART_POOL_PCT` |
-
 ---
+
+
 
 ## Quick Start
 
@@ -171,7 +171,7 @@ Dashboard: **http://127.0.0.1:8091**
 | `MAX_BET_PCT` | `0.03` | Max single bet size |
 | `KELLY_FRACTION` | `0.15` | Kelly sizing aggressiveness |
 | `CITY_CAP` | `4` | Max concurrent bets per city |
-| `SMART_POOL_PCT` | `0.40` | Capital reserve ratio |
+
 | `POLY_PRIVATE_KEY` | – | Live trading key |
 | `POLY_API_KEY` | – | Polymarket API key |
 | `WEATHERAPI_KEY` | – | WeatherAPI.com fallback key |

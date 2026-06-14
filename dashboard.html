@@ -129,7 +129,7 @@
                 <div class="card-value" id="dailyRoi">%0.00</div>
             </div>
             <div class="card-compact">
-                <div class="card-title">Açık Bet USD</div>
+                <div class="card-title">Açık Bet USD (Limit)</div>
                 <div class="card-value" id="exposure">$0.00</div>
             </div>
         </div>
@@ -236,11 +236,12 @@
                         <th>Bahis</th>
                         <th>PnL</th>
                         <th>Sonuç</th>
-                        <th>Tarih</th>
+                        <th>Açılış</th>
+                        <th>Kapanış</th>
                     </tr>
                 </thead>
                 <tbody id="historyTable">
-                    <tr><td colspan="7" style="text-align: center; padding: 40px;">Henüz sonuçlanmış bahis yok</td></tr>
+                    <tr><td colspan="8" style="text-align: center; padding: 40px;">Henüz sonuçlanmış bahis yok</td></tr>
                 </tbody>
             </table>
         </div>
@@ -346,8 +347,8 @@
                     badge.textContent = 'STOPPED';
                 }
                 
-                // Net Sermaye = initial - exposure (kullanilabilir nakit)
-                const netCapital = data.portfolio.initial - data.portfolio.exposure;
+                // Net Sermaye = guncel portfoy degeri
+                const netCapital = data.portfolio.current;
                 document.getElementById('portfolioValue').textContent = `$${netCapital.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
                 document.getElementById('portfolioValue').className = `card-value ${netCapital >= 0 ? '' : 'negative'}`;
                 document.getElementById('openBetsCount').textContent = data.stats.total_bets;
@@ -366,18 +367,24 @@
 
 
 
-                // Toplam ROI = sadece kapanmis betler (realized_pnl / initial)
-                const closedRoiVal = (data.portfolio.realized_pnl / data.portfolio.initial) * 100;
+                // Toplam ROI = API'den (realized_pnl / total_stake)
+                const closedRoiVal = data.portfolio.total_roi ?? (data.portfolio.realized_pnl / data.portfolio.initial) * 100;
                 const closedRoiEl = document.getElementById('closedRoi');
                 if (closedRoiEl) {
                     closedRoiEl.textContent = `%${closedRoiVal.toFixed(2)}`;
                     closedRoiEl.className = `card-value ${closedRoiVal >= 0 ? 'positive' : 'negative'}`;
                 }
-                // Gunluk ROI = bugun kapanan betlerin ROI'si
+                // Gunluk ROI = API'den (daily_pnl / daily_stake)
+                const dailyRoiVal = data.portfolio.daily_roi ?? 0;
+                const dailyRoiEl = document.getElementById('dailyRoi');
+                if (dailyRoiEl) {
+                    dailyRoiEl.textContent = `%${dailyRoiVal.toFixed(2)}`;
+                    dailyRoiEl.className = `card-value ${dailyRoiVal >= 0 ? 'positive' : 'negative'}`;
+                }
 
-
-
-                document.getElementById('exposure').textContent = `$${data.portfolio.exposure.toFixed(2)}`;
+                const maxExp = data.portfolio.max_exposure ?? 0;
+                document.getElementById('exposure').textContent = `$${data.portfolio.exposure.toFixed(2)} / $${maxExp.toFixed(2)}`;
+                document.getElementById('exposure').className = `card-value ${data.portfolio.exposure <= maxExp ? '' : 'negative'}`;
 
                 // Total signals / bets counters. These used to update only
                 // via the scan_complete WebSocket message, which meant the
@@ -535,6 +542,7 @@
                         <td>$${bet.stake_amount.toFixed(2)}</td>
                         <td class="${bet.realized_pnl >= 0 ? 'positive' : 'negative'}">$${bet.realized_pnl.toFixed(2)}</td>
                         <td><span class="badge badge-${bet.result.toLowerCase()}">${bet.result}</span></td>
+                        <td>${bet.placed_at ? new Date(bet.placed_at).toLocaleDateString() : '-'}</td>
                         <td>${bet.settled_at ? new Date(bet.settled_at).toLocaleDateString() : '-'}</td>
                     </tr>
                 `).join('');

@@ -121,7 +121,6 @@ class Config:
     """Central configuration for the PolyMarket Weather Bot."""
 
     INITIAL_PORTFOLIO = float(os.getenv("INITIAL_PORTFOLIO", "1000.0"))
-    SMART_POOL_PCT = float(os.getenv("SMART_POOL_PCT", "0.40"))
     MAX_EXPOSURE_PCT = float(os.getenv("MAX_EXPOSURE_PCT", "0.25"))
     MAX_BET_PCT = float(os.getenv("MAX_BET_PCT", "0.03"))
     MIN_BET_SIZE = float(os.getenv("MIN_BET_SIZE", "1.0"))
@@ -339,11 +338,6 @@ class Config:
     def get_normalized_weights(cls) -> dict:
         """Return normalized model weight dictionary."""
         return cls.MODEL_WEIGHTS
-
-    @classmethod
-    def get_smart_pool_amount(cls, portfolio_value: float) -> float:
-        """Return smart pool allocation amount."""
-        return portfolio_value * cls.SMART_POOL_PCT
 
     @classmethod
     def get_max_bet_amount(cls, portfolio_value: float) -> float:

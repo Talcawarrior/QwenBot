@@ -52,7 +52,7 @@ class MockBet:
 
 
 class RiskManager:
-    """Risk management with Kelly sizing, smart pool, and circuit breakers."""
+    """Risk management with Kelly sizing and circuit breakers."""
 
     def __init__(self, db_session=None, cfg=None):
         self.db = db_session
@@ -124,9 +124,8 @@ class RiskManager:
     def check_exposure_cap(self, current_exposure: float, additional_bet: float) -> bool:
         """Check total exposure cap limit.
 
-        Uses CONSERVATIVE portfolio value: cash + open_exposure.
-        This ensures the cap scales with actual money the bot controls,
-        not inflated by unrealized paper gains.
+        Portfolio = initial_capital + realized_pnl (unrealized katilmaz).
+        Limit = portfolio * 25%. Her gun PnL sermayeye eklenir.
         """
         conservative_value = self._conservative_portfolio_value()
         max_exposure = conservative_value * self.config.TOTAL_EXPOSURE_PCT
@@ -141,23 +140,20 @@ class RiskManager:
         return True
 
     def _conservative_portfolio_value(self) -> float:
-        """Compute conservative portfolio value: cash + open_exposure."""
+        """Portfolio = baslangic + gerceklesen kar/zarar (unrealized katilmaz)."""
         if not self.db:
             return self.portfolio_value
         try:
             from sqlalchemy import func
 
-            from database.models import Bet, Portfolio
-            pf = self.db.query(Portfolio).filter(Portfolio.id == 1).first()
-            if not pf:
-                return self.portfolio_value
-            cash = float(pf.cash_balance or 0)
-            exposure = float(
-                self.db.query(func.coalesce(func.sum(Bet.amount), 0.0))
-                .filter(Bet.status.in_(OPEN_BET_STATUSES))
+            from database.models import Bet
+            initial = self.config.INITIAL_PORTFOLIO
+            realized = float(
+                self.db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
+                .filter(Bet.status.in_(("won", "lost", "settled")))
                 .scalar() or 0.0
             )
-            return cash + exposure
+            return initial + realized
         except Exception:
             return self.portfolio_value
 
@@ -445,11 +441,7 @@ class RiskManager:
         max_bet = portfolio_value * self.config.MAX_BET_PCT
         kelly_size = min(kelly_size, max_bet)
 
-        # 3. Smart pool (%40 dokunulmaz)
-        available = portfolio_value * (1.0 - self.config.SMART_POOL_PCT)
-        kelly_size = min(kelly_size, available)
-
-        # 4. Exposure cap
+        # 3. Exposure cap
         current_exposure = self.get_total_exposure()
         max_exposure = portfolio_value * self.config.TOTAL_EXPOSURE_PCT
         remaining_cap = max(0, max_exposure - current_exposure)

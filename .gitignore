@@ -14,3 +14,9 @@ Thumbs.db
 uploads/
 data/strategy_params.json
 .env
+*.log
+bot_pid.txt
+*.pid
+*.png
+*.vbs
+dashboard_screenshot.*

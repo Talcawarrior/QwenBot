@@ -398,14 +398,6 @@ class TestPositionSizing:
         # %3 of 10000 = 300
         assert size <= 300
 
-    def test_position_size_respects_smart_pool(self):
-        """Smart pool (%40) korumalı."""
-        rm = make_risk_manager()
-        signal = _SignalObj(model_prob=0.70, entry_price=0.50)
-        size = rm.calculate_position_size_with_risk(signal, 1000)
-        # Available = 1000 * 0.60 = 600
-        assert size <= 600
-
     def test_position_size_minimum_bet(self):
         """Minimum bet boyutundan küçük olmamalı."""
         rm = make_risk_manager()

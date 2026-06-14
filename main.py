@@ -187,16 +187,30 @@ async def get_status():
         initial_capital = state.config.INITIAL_PORTFOLIO
         total_pnl = realized_pnl_db + unrealized_pnl_db
 
-        # ROI
-        total_roi = (total_pnl / initial_capital) * 100 if initial_capital > 0 else 0
-        daily_roi = (daily_pnl / initial_capital) * 100 if initial_capital > 0 else 0
+        # Total amount staked in settled bets (sum of all bet amounts
+        # regardless of win/loss). ROI = PnL / total_stake, NOT PnL / initial.
+        total_stake_settled = (
+            db.query(func.coalesce(func.sum(Bet.amount), 0.0))
+            .filter(Bet.status.in_(("won", "lost", "settled")))
+            .scalar()
+        ) or 0.0
+
+        # ROI: profit per dollar wagered (betting convention)
+        total_roi = (total_pnl / total_stake_settled) * 100 if total_stake_settled > 0 else 0
+        # Daily ROI: daily PnL / total stake settled today
+        total_stake_today = (
+            db.query(func.coalesce(func.sum(Bet.amount), 0.0))
+            .filter(Bet.status.in_(("won", "lost", "settled")), Bet.settled_at >= _today_start)
+            .scalar()
+        ) or 0.0
+        daily_roi = (daily_pnl / total_stake_today) * 100 if total_stake_today > 0 else 0
 
         return {
             "is_running": state.is_running,
             "locked": state.locked,
             "portfolio": {
                 "initial": initial_capital,
-                "current": float(portfolio.total_value) if portfolio else initial_capital,
+                "current": initial_capital - exposure_db,  # net sermaye = bastaki - acik bet
                 "daily_pnl": daily_pnl,
                 "daily_roi": daily_roi,
                 "unrealized_pnl": float(unrealized_pnl_db),
@@ -204,7 +218,7 @@ async def get_status():
                 "total_pnl": total_pnl,
                 "total_roi": total_roi,
                 "exposure": float(exposure_db),
-                "smart_pool": initial_capital * state.config.SMART_POOL_PCT,
+                "max_exposure": round((initial_capital + realized_pnl_db) * state.config.TOTAL_EXPOSURE_PCT, 2),
             },
             "stats": {
                 "total_signals": total_signals_db,
@@ -446,7 +460,8 @@ async def get_history():
             history.append({
                 "id": bet.id, "city": bet.city, "outcome": bet.side or "YES", "entry_price": bet.price,
                 "stake_amount": bet.amount, "realized_pnl": bet.pnl or 0.0, "result": "WIN" if bet.pnl > 0 else "LOSS",
-                "settled_at": bet.settled_at.isoformat() if bet.settled_at else None
+                "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
+                "settled_at": bet.settled_at.isoformat() if bet.settled_at else None,
             })
         win_rate = (total_won / (total_won + total_lost) * 100) if (total_won + total_lost) > 0 else 0
         return {

@@ -1,5 +1,10 @@
 {
-  "model_a": 0.5,
-  "model_b": 0.3,
-  "model_c": 0.2
+  "cma_grapes_global": 0.05,
+  "ecmwf_ifs04": 0.25,
+  "gem_seamless": 0.15,
+  "gfs_seamless": 0.3,
+  "icon_seamless": 0.1,
+  "jma_msm": 0.08,
+  "meteofrance_seamless": 0.03,
+  "ukmo_seamless": 0.04
 }

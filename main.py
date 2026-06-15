@@ -185,7 +185,7 @@ async def get_status():
         ) or 0.0
 
         initial_capital = state.config.INITIAL_PORTFOLIO
-        total_pnl = realized_pnl_db + unrealized_pnl_db
+        total_pnl = realized_pnl_db  # only realized from closed bets
 
         # Total amount staked in settled bets (sum of all bet amounts
         # regardless of win/loss). ROI = PnL / total_stake, NOT PnL / initial.
@@ -195,8 +195,8 @@ async def get_status():
             .scalar()
         ) or 0.0
 
-        # ROI: profit per dollar wagered (betting convention)
-        total_roi = (total_pnl / total_stake_settled) * 100 if total_stake_settled > 0 else 0
+        # ROI: profit per dollar wagered on CLOSED bets only (no unrealized)
+        total_roi = (realized_pnl_db / total_stake_settled) * 100 if total_stake_settled > 0 else 0
         # Daily ROI: daily PnL / total stake settled today
         total_stake_today = (
             db.query(func.coalesce(func.sum(Bet.amount), 0.0))
@@ -210,7 +210,7 @@ async def get_status():
             "locked": state.locked,
             "portfolio": {
                 "initial": initial_capital,
-                "current": initial_capital - exposure_db,  # net sermaye = bastaki - acik bet
+                "current": (initial_capital + realized_pnl_db) - exposure_db,  # net sermaye = (bastaki + kar/zarar) - acik bet
                 "daily_pnl": daily_pnl,
                 "daily_roi": daily_roi,
                 "unrealized_pnl": float(unrealized_pnl_db),

@@ -107,11 +107,16 @@ class BetPlacer:
                 return None
 
             # ------------------------------------------------------------------
-            # Sync RiskManager portfolio_value from DB so risk caps reflect
-            # actual portfolio state, not stale in-memory value.
-            _pf = session.query(Portfolio).filter(Portfolio.id == 1).first()
-            if _pf and _pf.total_value is not None:
-                self.risk_manager.update_portfolio(float(_pf.total_value))
+            # Sync RiskManager portfolio_value with CONSERVATIVE value
+            # (initial + realized_pnl) NOT Portfolio.total_value which can be
+            # inflated by stale paper bets.
+            _initial = float(self.risk_manager.config.INITIAL_PORTFOLIO)
+            _realized = float(
+                session.query(func.coalesce(func.sum(Bet.pnl), 0.0))
+                .filter(Bet.status.in_(("won", "lost", "settled")))
+                .scalar() or 0.0
+            )
+            self.risk_manager.update_portfolio(_initial + _realized)
 
             # Risk checks. These are enforced HERE (not in run_place_bets)
             # so every entry point "" scheduler, manual API call, CLI "" is

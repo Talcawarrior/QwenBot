@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚡ ASIAbot - Self-Evolving Predictor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0b0f19; color: #f1f5f9; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        
+        /* Branded Header */
+        header { 
+            background: linear-gradient(135deg, #1e1b4b 0%, #311042 50%, #4c1d95 100%); 
+            padding: 25px; 
+            border-radius: 16px; 
+            margin-bottom: 20px; 
+            border: 1px solid #4c1d95;
+            box-shadow: 0 4px 20px rgba(139, 92, 246, 0.15);
+        }
+        h1 { font-size: 26px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
+        .status-badge { display: inline-block; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+        .status-running { background: #10b981; color: white; box-shadow: 0 0 10px rgba(16, 185, 129, 0.4); }
+        .status-stopped { background: #ef4444; color: white; box-shadow: 0 0 10px rgba(239, 68, 68, 0.4); }
+        .status-locked { background: #f59e0b; color: white; }
+        
+        /* Controls */
+        .controls { display: flex; gap: 10px; }
+        button { padding: 10px 18px; border: none; border-radius: 8px; font-weight: 700; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 6px; }
+        button:hover { transform: translateY(-2px); filter: brightness(1.1); }
+        .btn-start { background: #10b981; color: white; }
+        .btn-stop { background: #ef4444; color: white; }
+        .btn-reset { background: #475569; color: white; }
+        .btn-evolve { background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%); color: white; box-shadow: 0 0 15px rgba(139, 92, 246, 0.4); }
+        
+        /* Tabs */
+        .tabs { display: flex; gap: 5px; margin-bottom: 20px; border-bottom: 2px solid #1e293b; }
+        .tab { padding: 12px 24px; background: #111827; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; color: #94a3b8; }
+        .tab.active { background: #311042; color: #ec4899; border-top: 3px solid #ec4899; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        /* Cards */
+        .card-grid-compact { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 15px; }
+        .card-compact { background: #111827; padding: 14px; border-radius: 12px; border: 1px solid #1e293b; text-align: center; }
+        .card-compact .card-title { font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
+        .card-compact .card-value { font-size: 22px; font-weight: 800; margin-top: 5px; }
+        .card-compact .card-value.positive { color: #10b981; }
+        .card-compact .card-value.negative { color: #ef4444; }
+
+        /* Weight Distribution Grid */
+        .weight-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 20px; }
+        .weight-card { background: #111827; padding: 12px; border-radius: 10px; border: 1px solid #1e293b; }
+        .weight-card h4 { font-size: 12px; color: #94a3b8; margin-bottom: 8px; text-transform: uppercase; }
+        .weight-num { font-size: 20px; font-weight: 800; color: #a78bfa; margin-bottom: 5px; }
+        
+        /* Progress bars */
+        .progress-bar { background: #1e293b; border-radius: 4px; height: 6px; overflow: hidden; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #a78bfa, #ec4899); transition: width 0.5s; }
+        
+        /* Tables */
+        table { width: 100%; border-collapse: collapse; background: #111827; border-radius: 12px; overflow: hidden; border: 1px solid #1e293b; }
+        th, td { padding: 14px 18px; text-align: left; border-bottom: 1px solid #1e293b; }
+        th { background: #030712; font-weight: 700; font-size: 11px; text-transform: uppercase; color: #94a3b8; }
+        tr:hover { background: #1f2937; }
+        .badge { padding: 4px 10px; border-radius: 6px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+        .badge-yes { background: #10b981; color: white; }
+        .badge-no { background: #ef4444; color: white; }
+        .badge-win { background: #10b981; color: white; }
+        .badge-loss { background: #ef4444; color: white; }
+        .badge-ladder { background: #8b5cf6; color: white; }
+
+        /* Insight container */
+        .insight-text { font-size: 12px; color: #cbd5e1; background: #1f2937; padding: 8px 12px; border-radius: 6px; border-left: 3px solid #8b5cf6; margin-top: 5px; }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .card-grid-compact { grid-template-columns: 1fr 1fr; }
+            table { font-size: 11px; }
+            th, td { padding: 8px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+            <div>
+                <h1>🤖 ASIAbot <span id="statusBadge" class="status-badge status-stopped">STOPPED</span></h1>
+                <p style="margin-top: 6px; opacity: 0.9; font-size: 13px; color: #c084fc;">
+                    ASI-Evolve & SIA Multi-Agent Loop • 8-Model Weather Consensus • On-Chain CLOB Analyzer
+                </p>
+            </div>
+            <div class="controls">
+                <button class="btn-evolve" onclick="runEvolution()">🧬 ASI-Evolve Çalıştır</button>
+                <button class="btn-start" onclick="startBot()">▶️ Başlat</button>
+                <button class="btn-stop" onclick="stopBot()">⏹️ Durdur</button>
+                <button class="btn-reset" onclick="resetBot()">🔄 Sıfırla</button>
+            </div>
+        </header>
+        
+        <!-- Live Weight Distribution Section -->
+        <div style="background: #111827; padding: 15px; border-radius: 12px; border: 1px solid #1e293b; margin-bottom: 20px;">
+            <h3 style="margin-bottom: 12px; font-size: 14px; text-transform: uppercase; color: #a78bfa; display: flex; align-items: center; gap: 6px;">
+                📊 Mevcut Evrimleşmiş Model Ağırlıkları (ASI-Evolved Weights)
+            </h3>
+            <div class="weight-grid" id="weightsContainer">
+                <!-- Dynamically loaded weights -->
+            </div>
+        </div>
+        
+        <!-- Portfolio Stats - 2 rows x 4 cols -->
+        <div class="card-grid-compact">
+            <div class="card-compact">
+                <div class="card-title">Net Sermaye</div>
+                <div class="card-value" id="portfolioValue">$1,000.00</div>
+            </div>
+            <div class="card-compact">
+                <div class="card-title">Açık Bahis</div>
+                <div class="card-value" id="openBetsCount" style="color: #a78bfa;">0</div>
+            </div>
+            <div class="card-compact">
+                <div class="card-title">Açık PnL</div>
+                <div class="card-value" id="unrealizedPnl">$0.00</div>
+            </div>
+            <div class="card-compact">
+                <div class="card-title">Kapalı PnL</div>
+                <div class="card-value" id="realizedPnl">$0.00</div>
+            </div>
+            <div class="card-compact">
+                <div class="card-title">Toplam PnL</div>
+                <div class="card-value" id="totalPnl">$0.00</div>
+            </div>
+            <div class="card-compact">
+                <div class="card-title">Toplam ROI (Kapalı)</div>
+                <div class="card-value" id="closedRoi">%0.00</div>
+            </div>
+            <div class="card-compact">
+                <div class="card-title">Günlük ROI</div>
+                <div class="card-value" id="dailyRoi">%0.00</div>
+            </div>
+            <div class="card-compact">
+                <div class="card-title">Açık Bet USD (Limit)</div>
+                <div class="card-value" id="exposure">$0.00</div>
+            </div>
+        </div>
+        
+        <!-- Risk Limits - Compact -->
+        <div class="card-grid-compact">
+            <div class="card-compact">
+                <div class="card-title">Min Edge (Evrimleşen)</div>
+                <div class="card-value" style="font-size: 18px; color: #f472b6;" id="maxBet">%5</div>
+            </div>
+            <div class="card-compact">
+                <div class="card-title">Kelly Fraction (Evrimleşen)</div>
+                <div class="card-value" style="font-size: 18px; color: #f472b6;" id="maxExposure">%15</div>
+            </div>
+            <div class="card-compact">
+                <div class="card-title">Daily Stop-Loss</div>
+                <div class="card-value" style="font-size: 18px;" id="dailyStop">%5</div>
+            </div>
+            <div class="card-compact">
+                <div class="card-title">City Cap</div>
+                <div class="card-value" style="font-size: 18px;" id="cityCap">4</div>
+            </div>
+        </div>
+        
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('cognition', event)">🧠 ASI-Evolve Zeka & Hafıza</button>
+            <button class="tab" onclick="switchTab('signals', event)">🎯 Aktif Sinyaller</button>
+            <button class="tab" onclick="switchTab('markets', event)">🌍 Global Market Watch</button>
+            <button class="tab" onclick="switchTab('history', event)">📊 Geçmiş Bahisler</button>
+        </div>
+        
+        <!-- Tab 0: ASI Cognition Base -->
+        <div id="cognition" class="tab-content active">
+            <div style="background: #111827; padding: 15px; border-radius: 12px; margin-bottom: 15px; border: 1px solid #1e293b;">
+                <h3 style="color: #ec4899; margin-bottom: 8px;">Bilişsel Hafıza Tabanı (Cognition Base) Nedir?</h3>
+                <p style="font-size: 13px; color: #94a3b8; line-height: 1.5;">
+                    ASIAbot'un <strong>ASI-Evolve</strong> sistemi, geçmiş turlardaki bütün tahmin başarılarını, Brier skorlarını ve finansal kârlılıkları inceler. Çıkarttığı sözel ve mantıksal içgörüleri (Cognition Nodes) hafızasında saklar. Bu sayede her yeni evrim adımında geçmişteki hataları yapmamayı öğrenerek kusursuz bir tahmin formülü geliştirir.
+                </p>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 80px;">Tur</th>
+                        <th style="width: 250px;">Hipotez / Karar Yönü</th>
+                        <th style="width: 100px;">Brier Skoru</th>
+                        <th style="width: 100px;">Sanal ROI</th>
+                        <th style="width: 100px;">Win Rate</th>
+                        <th>Neden-Sonuç İlişkisi (Causal Insight)</th>
+                    </tr>
+                </thead>
+                <tbody id="cognitionTable">
+                    <tr><td colspan="6" style="text-align: center; padding: 40px;">Bilişsel hafıza yükleniyor...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Tab 1: Active Signals -->
+        <div id="signals" class="tab-content">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Şehir</th>
+                        <th>Açılış Tarihi</th>
+                        <th>Kapanış Tarihi</th>
+                        <th>Outcome</th>
+                        <th>Ladder</th>
+                        <th>Giriş</th>
+                        <th>Mevcut</th>
+                        <th>Bahis</th>
+                        <th>PnL</th>
+                        <th>Entry Edge</th>
+                        <th>Live Edge</th>
+                        <th>Hareket %</th>
+                        <th>Durum</th>
+                    </tr>
+                </thead>
+                <tbody id="signalsTable">
+                    <tr><td colspan="14" style="text-align: center; padding: 40px;">Henüz aktif bahis yok</td></tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Tab 2: Global Markets -->
+        <div id="markets" class="tab-content">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Şehir</th>
+                        <th>Tarih</th>
+                        <th>Metrik</th>
+                        <th>Strike</th>
+                        <th>Model Prob</th>
+                        <th>YES Fiyat</th>
+                        <th>NO Fiyat</th>
+                        <th>Edge</th>
+                        <th>EV / $1</th>
+                    </tr>
+                </thead>
+                <tbody id="marketsTable">
+                    <tr><td colspan="9" style="text-align: center; padding: 40px;">Market verisi yükleniyor...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Tab 3: History -->
+        <div id="history" class="tab-content">
+            <div class="card-grid-compact" style="margin-bottom: 20px;">
+                <div class="card-compact">
+                    <div class="card-title">Kazanan</div>
+                    <div class="card-value positive" id="totalWon">0</div>
+                </div>
+                <div class="card-compact">
+                    <div class="card-title">Kaybeden</div>
+                    <div class="card-value negative" id="totalLost">0</div>
+                </div>
+                <div class="card-compact">
+                    <div class="card-title">Win Rate</div>
+                    <div class="card-value" id="winRate">0%</div>
+                </div>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Şehir</th>
+                        <th>Outcome</th>
+                        <th>Bahis</th>
+                        <th>PnL</th>
+                        <th>Sonuç</th>
+                        <th>Açılış</th>
+                        <th>Kapanış</th>
+                    </tr>
+                </thead>
+                <tbody id="historyTable">
+                    <tr><td colspan="8" style="text-align: center; padding: 40px;">Henüz sonuçlanmış bahis yok</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE = '';
+        
+        // Format prices
+        function fmtPrice(value, force2) {
+            if (value === null || value === undefined || Number.isNaN(value)) return '-';
+            const v = Number(value);
+            if (force2) return v.toFixed(2);
+            if (v > 0 && v < 0.01) return v.toFixed(4);
+            if (v >= 0.01 && v < 1) return v.toFixed(3);
+            return v.toFixed(2);
+        }
+
+        async function loadStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/api/status`);
+                const data = await res.json();
+                
+                // Update badge
+                const badge = document.getElementById('statusBadge');
+                if (data.locked) {
+                    badge.className = 'status-badge status-locked';
+                    badge.textContent = 'LOCKED';
+                } else if (data.is_running) {
+                    badge.className = 'status-badge status-running';
+                    badge.textContent = 'RUNNING';
+                } else {
+                    badge.className = 'status-badge status-stopped';
+                    badge.textContent = 'STOPPED';
+                }
+                
+                // Net Capital
+                const netCapital = data.portfolio.current;
+                document.getElementById('portfolioValue').textContent = `$${netCapital.toLocaleString('en-US', {minimumFractionDigits: 2})}`;
+                document.getElementById('openBetsCount').textContent = data.stats.total_bets;
+                
+                document.getElementById('realizedPnl').textContent = `$${data.portfolio.realized_pnl.toFixed(2)}`;
+                document.getElementById('realizedPnl').className = `card-value ${data.portfolio.realized_pnl >= 0 ? 'positive' : 'negative'}`;
+
+                document.getElementById('unrealizedPnl').textContent = `$${data.portfolio.unrealized_pnl.toFixed(2)}`;
+                document.getElementById('unrealizedPnl').className = `card-value ${data.portfolio.unrealized_pnl >= 0 ? 'positive' : 'negative'}`;
+
+                document.getElementById('totalPnl').textContent = `$${data.portfolio.total_pnl.toFixed(2)}`;
+                document.getElementById('totalPnl').className = `card-value ${data.portfolio.total_pnl >= 0 ? 'positive' : 'negative'}`;
+
+                const closedRoiVal = data.portfolio.total_roi ?? 0;
+                document.getElementById('closedRoi').textContent = `%${closedRoiVal.toFixed(2)}`;
+                document.getElementById('closedRoi').className = `card-value ${closedRoiVal >= 0 ? 'positive' : 'negative'}`;
+
+                const dailyRoiVal = data.portfolio.daily_roi ?? 0;
+                document.getElementById('dailyRoi').textContent = `%${dailyRoiVal.toFixed(2)}`;
+                document.getElementById('dailyRoi').className = `card-value ${dailyRoiVal >= 0 ? 'positive' : 'negative'}`;
+
+                const maxExp = data.portfolio.max_exposure ?? 0;
+                document.getElementById('exposure').textContent = `$${data.portfolio.exposure.toFixed(2)} / $${maxExp.toFixed(2)}`;
+
+                // Evolved params
+                document.getElementById('maxBet').textContent = `%${(data.limits.min_edge_pct || 5.0).toFixed(1)}`;
+                document.getElementById('maxExposure').textContent = `%${(data.limits.kelly_fraction_pct || 15.0).toFixed(1)}`;
+                document.getElementById('dailyStop').textContent = `%${data.limits.daily_stop_loss_pct}`;
+                document.getElementById('cityCap').textContent = data.limits.city_cap;
+            } catch (err) {
+                console.error('Status load error:', err);
+            }
+        }
+
+        async function loadEvolvedWeights() {
+            try {
+                const res = await fetch(`${API_BASE}/api/asi/weights`);
+                const weights = await res.json();
+                const container = document.getElementById('weightsContainer');
+                
+                container.innerHTML = Object.entries(weights).map(([model, w]) => {
+                    const pct = (w * 100).toFixed(2);
+                    return `
+                        <div class="weight-card">
+                            <h4>${model.replace('_seamless', '').replace('04', '').toUpperCase()}</h4>
+                            <div class="weight-num">${pct}%</div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: ${pct}%"></div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (err) {
+                console.error('Weights load error:', err);
+            }
+        }
+
+        async function loadCognition() {
+            try {
+                const res = await fetch(`${API_BASE}/api/asi/cognition`);
+                const data = await res.json();
+                const tbody = document.getElementById('cognitionTable');
+                
+                if (!data || data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px;">Bilişsel hafıza boş</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = data.reverse().map(node => `
+                    <tr>
+                        <td style="font-weight: bold; color: #a78bfa; text-align: center;">Round ${node.round}</td>
+                        <td style="font-size: 12px; font-weight: 600; color: #f472b6;">${node.hypothesis}</td>
+                        <td style="font-family: monospace;">${node.brier_score.toFixed(4)}</td>
+                        <td style="font-family: monospace; color: ${node.roi >= 0 ? '#10b981' : '#ef4444'}">${node.roi.toFixed(2)}%</td>
+                        <td style="font-family: monospace;">${(node.win_rate * 100).toFixed(1)}%</td>
+                        <td>
+                            <div class="insight-text">${node.causal_insight}</div>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                console.error('Cognition load error:', err);
+            }
+        }
+
+        async function loadSignals() {
+            try {
+                const res = await fetch(`${API_BASE}/api/signals`);
+                const data = await res.json();
+                const tbody = document.getElementById('signalsTable');
+                
+                if (!data.signals || data.signals.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="14" style="text-align: center; padding: 40px;">Henüz aktif bahis yok</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = data.signals.map(bet => {
+                    const entryEdge = bet.entry_edge != null ? `${(bet.entry_edge * 100).toFixed(1)}%` : '-';
+                    const liveEdge = bet.live_edge != null ? `${(bet.live_edge * 100).toFixed(1)}%` : '-';
+                    const movePct = bet.move_pct != null ? `${bet.move_pct >= 0 ? '+' : ''}${(bet.move_pct * 100).toFixed(1)}%` : '-';
+                    return `
+                        <tr>
+                            <td>#${bet.id}</td>
+                            <td>${bet.city || '-'}</td>
+                            <td>${bet.placed_at ? new Date(bet.placed_at).toLocaleString('tr-TR') : '-'}</td>
+                            <td>${bet.resolution_date ? new Date(bet.resolution_date).toLocaleString('tr-TR') : '-'}</td>
+                            <td><span class="badge badge-yes">${bet.outcome || 'YES'}</span></td>
+                            <td>${bet.ladder_orders && bet.ladder_orders.length > 0 ? '<span class="badge badge-ladder">🪜 LADDER</span>' : '-'}</td>
+                            <td>${fmtPrice(bet.entry_price)}</td>
+                            <td>${fmtPrice(bet.current_price)}</td>
+                            <td>$${fmtPrice(bet.stake_amount, 2)}</td>
+                            <td class="${bet.unrealized_pnl >= 0 ? 'positive' : 'negative'}">$${fmtPrice(bet.unrealized_pnl, 2)}</td>
+                            <td>${entryEdge}</td>
+                            <td>${liveEdge}</td>
+                            <td class="${bet.move_pct >= 0 ? 'positive' : 'negative'}">${movePct}</td>
+                            <td><span class="badge" style="background: #10b981;">${bet.status || 'ACTIVE'}</span></td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (err) {
+                console.error('Signals load error:', err);
+            }
+        }
+
+        async function loadMarkets() {
+            try {
+                const res = await fetch(`${API_BASE}/api/markets`);
+                const data = await res.json();
+                const tbody = document.getElementById('marketsTable');
+                
+                if (!data.markets || data.markets.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 40px;">Market bulunamadı</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.markets.slice(0, 50).map(m => {
+                    const modelPct = m.model_prob != null ? `${(m.model_prob * 100).toFixed(1)}%` : '-';
+                    const edgeCell = m.edge != null ? `<td style="color: ${m.edge > 0.03 ? '#10b981' : m.edge < 0 ? '#ef4444' : ''}">${(m.edge * 100).toFixed(1)}%</td>` : '<td>-</td>';
+                    return `
+                        <tr>
+                            <td>${m.city || '-'}</td>
+                            <td>${m.date ? new Date(m.date).toLocaleDateString() : '-'}</td>
+                            <td><span class="badge badge-yes">${m.outcome_type}</span></td>
+                            <td>${m.strike_temp != null ? m.strike_temp.toFixed(1) + '°C' : '-'}</td>
+                            <td>${modelPct}</td>
+                            <td>${fmtPrice(m.current_yes_bid)}</td>
+                            <td>${fmtPrice(m.current_no_bid)}</td>
+                            ${edgeCell}
+                            <td>${m.ev != null ? m.ev.toFixed(3) : '-'}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (err) {
+                console.error('Markets load error:', err);
+            }
+        }
+
+        async function loadHistory() {
+            try {
+                const res = await fetch(`${API_BASE}/api/history`);
+                const data = await res.json();
+                const tbody = document.getElementById('historyTable');
+                
+                if (data.stats) {
+                    document.getElementById('totalWon').textContent = data.stats.total_won;
+                    document.getElementById('totalLost').textContent = data.stats.total_lost;
+                    document.getElementById('winRate').textContent = `${data.stats.win_rate}%`;
+                }
+                
+                if (!data.history || data.history.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 40px;">Henüz sonuçlanmış bahis yok</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = data.history.map(bet => `
+                    <tr>
+                        <td>#${bet.id}</td>
+                        <td>${bet.city}</td>
+                        <td><span class="badge badge-yes">${bet.outcome}</span></td>
+                        <td>$${bet.stake_amount.toFixed(2)}</td>
+                        <td class="${bet.realized_pnl >= 0 ? 'positive' : 'negative'}">$${bet.realized_pnl.toFixed(2)}</td>
+                        <td><span class="badge badge-${bet.result.toLowerCase()}">${bet.result}</span></td>
+                        <td>${bet.placed_at ? new Date(bet.placed_at).toLocaleDateString() : '-'}</td>
+                        <td>${bet.settled_at ? new Date(bet.settled_at).toLocaleDateString() : '-'}</td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                console.error('History load error:', err);
+            }
+        }
+
+        async function runEvolution() {
+            const btn = document.querySelector('.btn-evolve');
+            const origText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '🧬 Evrimleştiriliyor...';
+            try {
+                const res = await fetch(`${API_BASE}/api/asi/evolve`, { method: 'POST' });
+                const result = await res.json();
+                alert(`Evrim Döngüsü Tamamlandı!\nEn iyi tur: Round ${result.round}\nSanal ROI: %${result.roi.toFixed(2)}\nBrier Skoru: ${result.brier_score.toFixed(4)}\nYeni ağırlıklar canlıya alındı!`);
+            } catch (err) {
+                alert('Evrim hatası: ' + err);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = origText;
+                loadCognition();
+                loadEvolvedWeights();
+                loadStatus();
+            }
+        }
+
+        async function startBot() {
+            await fetch(`${API_BASE}/api/start`, { method: 'POST' });
+            setTimeout(loadStatus, 500);
+        }
+
+        async function stopBot() {
+            await fetch(`${API_BASE}/api/stop`, { method: 'POST' });
+            setTimeout(loadStatus, 500);
+        }
+
+        async function resetBot() {
+            await fetch(`${API_BASE}/api/reset`, { method: 'POST' });
+            setTimeout(() => {
+                loadStatus();
+                loadSignals();
+                loadHistory();
+            }, 5000);
+        }
+
+        function switchTab(tabId, event) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById(tabId).classList.add('active');
+            
+            if (tabId === 'cognition') loadCognition();
+            if (tabId === 'signals') loadSignals();
+            if (tabId === 'markets') loadMarkets();
+            if (tabId === 'history') loadHistory();
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadStatus();
+            loadEvolvedWeights();
+            loadCognition();
+            loadSignals();
+            loadMarkets();
+            loadHistory();
+            
+            setInterval(() => {
+                loadStatus();
+                loadSignals();
+            }, 5000);
+        });
+    </script>
+</body>
+</html>

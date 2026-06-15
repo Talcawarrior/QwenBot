@@ -174,26 +174,31 @@ def test_risk_manager_init():
 def test_betting_engine_ev_full():
     """Test 9: Full EV pipeline with fee."""
     from engine.strategy import BettingEngine
-    be = BettingEngine()
+    orig_min_edge = bot_config.strategy.min_edge
+    bot_config.strategy.min_edge = 0.15
+    try:
+        be = BettingEngine()
 
-    # Test with edge above min_edge (0.15 from config)
-    s1 = be.analyze_signal(
-        {"yes_price": 0.70, "city_code": "KLGA"},
-        model_prob=0.86, side="YES",
-    )
-    # edge=0.16, ev=0.14 → eligible (ev>0, edge>=min_edge=0.15)
-    assert s1 is not None, "Should be eligible"
-    assert s1["ev"] > 0, f"EV={s1['ev']}, expected positive"
+        # Test with edge above min_edge (0.15 from config)
+        s1 = be.analyze_signal(
+            {"yes_price": 0.70, "city_code": "KLGA"},
+            model_prob=0.86, side="YES",
+        )
+        # edge=0.16, ev=0.14 → eligible (ev>0, edge>=min_edge=0.15)
+        assert s1 is not None, "Should be eligible"
+        assert s1["ev"] > 0, f"EV={s1['ev']}, expected positive"
 
-    # Test with edge below min_edge (0.15 from config)
-    s2 = be.analyze_signal(
-        {"yes_price": 0.70, "city_code": "KLGA"},
-        model_prob=0.80, side="YES",
-    )
-    # edge=0.10 < min_edge=0.15 → not eligible
-    assert s2 is None, "Should NOT be eligible (edge < 0.15)"
-    print(f"✅ Test 9: EV pipeline OK — eligible edge={s1['edge']}->ev={s1['ev']}, "
-          f"rejected edge=0.10->ev=0.08")
+        # Test with edge below min_edge (0.15 from config)
+        s2 = be.analyze_signal(
+            {"yes_price": 0.70, "city_code": "KLGA"},
+            model_prob=0.80, side="YES",
+        )
+        # edge=0.10 < min_edge=0.15 → not eligible
+        assert s2 is None, "Should NOT be eligible (edge < 0.15)"
+        print(f"✅ Test 9: EV pipeline OK — eligible edge={s1['edge']}->ev={s1['ev']}, "
+              f"rejected edge=0.10->ev=0.08")
+    finally:
+        bot_config.strategy.min_edge = orig_min_edge
 
 
 if __name__ == "__main__":

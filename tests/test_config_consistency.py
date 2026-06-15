@@ -12,8 +12,8 @@ def test_strategy_config_min_edge_default():
     """bot_config.strategy.min_edge should match the current config value."""
     from config.settings import bot_config
     # This test documents the actual value; update if config changes.
-    assert bot_config.strategy.min_edge == 0.15, (
-        f"Expected min_edge=0.15, got {bot_config.strategy.min_edge}"
+    assert bot_config.strategy.min_edge == 0.05, (
+        f"Expected min_edge=0.05, got {bot_config.strategy.min_edge}"
     )
 
 

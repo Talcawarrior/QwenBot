@@ -1,4 +1,4 @@
-﻿"""PolyMarket Ultimate Hybrid Weather Bot - Configuration Dataclasses & Legacy Config."""
+"""PolyMarket Ultimate Hybrid Weather Bot - Configuration Dataclasses & Legacy Config."""
 
 import os
 from dataclasses import dataclass
@@ -23,6 +23,7 @@ def _resolve_path(path_value: str, default_relative: str) -> str:
 @dataclass
 class PolymarketConfig:
     """Polymarket specific configurations."""
+
     api_url: str = "https://clob.polymarket.com"
     gamma_url: str = "https://gamma-api.polymarket.com"
     private_key: str = os.getenv("POLY_PRIVATE_KEY", "")
@@ -33,15 +34,27 @@ class PolymarketConfig:
 
     def __post_init__(self):
         self.weather_keywords = [
-            "temperature", "heat", "cold", "snow", "rain",
-            "hurricane", "storm", "weather", "Â°F", "Â°C",
-            "celsius", "fahrenheit", "precipitation", "highest"
+            "temperature",
+            "heat",
+            "cold",
+            "snow",
+            "rain",
+            "hurricane",
+            "storm",
+            "weather",
+            "Â°F",
+            "Â°C",
+            "celsius",
+            "fahrenheit",
+            "precipitation",
+            "highest",
         ]
 
 
 @dataclass
 class MeteoConfig:
     """Weather service API configurations."""
+
     openmeteo_url: str = "https://api.open-meteo.com/v1/forecast"
     weatherapi_key: str = os.getenv("WEATHERAPI_KEY", "")
     weatherapi_url: str = "https://api.weatherapi.com/v1"
@@ -50,18 +63,19 @@ class MeteoConfig:
 @dataclass
 class StrategyConfig:
     """Strategy & bankroll metrics."""
+
     # Polymarket temperature markets in /public-search almost never
     # produce 5%+ edge because the market price already discounts the
     # public NWS/Open-Meteo consensus.  5% is enough to cover bookmaker
     # vig + a thin profit margin in paper mode.  Can be lowered once a
     # private weather feed (e.g. ECMWF-direct) gives a structural edge.
-    min_edge: float = 0.05           # 5% edge minimum (must exceed 2% fee_drag + margin)
-    max_bet_amount: float = 30.0    # Maximum $50 per bet
-    min_liquidity: float = 0.0      # Liquidity check disabled: Polymarket public-search
-                                    # markets don't expose a `liquidity` field reliably
-                                    # (it's always 0). The current_price already reflects
-                                    # real market depth.
-    kelly_fraction: float = 0.15    # Quarter/Fractional Kelly (aligned with QwenBot 15%)
+    min_edge: float = 0.05  # 5% edge minimum (must exceed 2% fee_drag + margin)
+    max_bet_amount: float = 30.0  # Maximum $50 per bet
+    min_liquidity: float = 0.0  # Liquidity check disabled: Polymarket public-search
+    # markets don't expose a `liquidity` field reliably
+    # (it's always 0). The current_price already reflects
+    # real market depth.
+    kelly_fraction: float = 0.15  # Quarter/Fractional Kelly (aligned with QwenBot 15%)
     # Time-to-close edge escalation. As a market approaches its
     # resolution time, Polymarket prices move fast on the public
     # weather consensus and forecast uncertainty is already low.
@@ -71,8 +85,8 @@ class StrategyConfig:
     # ramps to edge_escalation_multiplier * min_edge at 0h.
     edge_escalation_hours: int = 24
     edge_escalation_multiplier: float = 2.0
-    min_sources: int = 2            # En az 2 kaynak (openmeteo + weatherapi ile calisiyor)
-    fee_drag: float = 0.02          # Polymarket taker fee %2
+    min_sources: int = 2  # En az 2 kaynak (openmeteo + weatherapi ile calisiyor)
+    fee_drag: float = 0.02  # Polymarket taker fee %2
     # Bot scope: today + 1 + 2 days ahead (0..2 inclusive).
     # Tightened from 14 to 2 so the bot only trades near-term markets
     # where the public weather ensemble (GFS/ECMWF/ICON/...) is still
@@ -83,27 +97,29 @@ class StrategyConfig:
 @dataclass
 class RiskConfig:
     """Active risk management: position-level stop-loss, take-profit, time decay, rebalance."""
+
     # Position-level limits
-    stop_loss_pct: float = 0.30          # %30 kayıpta otomatik kapat
-    take_profit_pct: float = 1.0         # %100 karda otomatik kapat
-    trailing_stop_pct: float = 0.15      # %15 trailing stop (tepeden düşüşte)
+    stop_loss_pct: float = 0.30  # %30 kayıpta otomatik kapat
+    take_profit_pct: float = 1.0  # %100 karda otomatik kapat
+    trailing_stop_pct: float = 0.15  # %15 trailing stop (tepeden düşüşte)
 
     # Time-based exits
-    time_decay_hours: int = 24           # Settlement'a bu kadar saat kala
+    time_decay_hours: int = 24  # Settlement'a bu kadar saat kala
     time_decay_threshold: float = -0.10  # %10 zarardaysa kapat
 
     # Rebalancing
-    min_rebalance_edge_ratio: float = 2.0   # Yeni edge en az 2x eski edge
-    max_city_positions: int = 3             # Şehir başına max pozisyon (rebalance)
-    rebalance_min_loss: float = -0.15       # Rebalance için min zarar eşiği
+    min_rebalance_edge_ratio: float = 2.0  # Yeni edge en az 2x eski edge
+    max_city_positions: int = 3  # Şehir başına max pozisyon (rebalance)
+    rebalance_min_loss: float = -0.15  # Rebalance için min zarar eşiği
 
     # Risk management loop interval (seconds)
-    risk_scan_interval: int = 300           # Her 5 dakikada bir tara
+    risk_scan_interval: int = 300  # Her 5 dakikada bir tara
 
 
 @dataclass
 class BotConfig:
     """Combined configurations."""
+
     polymarket: PolymarketConfig = None
     meteo: MeteoConfig = None
     strategy: StrategyConfig = None
@@ -161,62 +177,62 @@ class Config:
     DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 
     HOST = os.getenv("HOST", "0.0.0.0")
-    PORT = int(os.getenv("PORT", "8091"))
+    PORT = int(os.getenv("PORT", "8093"))
 
     ICAO_COORDS = {
         # Turkey (4)
-        "LTAC": (39.9891, 32.8236),   # Ankara Esenboğa
-        "LTFM": (41.2753, 28.7519),   # Istanbul Airport
-        "LTBJ": (38.2924, 27.1569),   # Izmir Adnan Menderes
-        "LTAI": (36.8987, 30.8005),   # Antalya
+        "LTAC": (39.9891, 32.8236),  # Ankara Esenboğa
+        "LTFM": (41.2753, 28.7519),  # Istanbul Airport
+        "LTBJ": (38.2924, 27.1569),  # Izmir Adnan Menderes
+        "LTAI": (36.8987, 30.8005),  # Antalya
         # USA (15)
         "KDAL": (32.8471, -96.8517),  # Dallas Love Field
         "KMIA": (25.7959, -80.2870),  # Miami
         "KORD": (41.9742, -87.9073),  # Chicago O'Hare
         "KLGA": (40.7769, -73.8740),  # New York LaGuardia
-        "KLAX": (33.9416, -118.4085), # Los Angeles
-        "KLAS": (36.0840, -115.1537), # Las Vegas McCarran
-        "KPHX": (33.4343, -112.0080), # Phoenix Sky Harbor
+        "KLAX": (33.9416, -118.4085),  # Los Angeles
+        "KLAS": (36.0840, -115.1537),  # Las Vegas McCarran
+        "KPHX": (33.4343, -112.0080),  # Phoenix Sky Harbor
         "KIAH": (29.9844, -95.3414),  # Houston George Bush
         "KATL": (33.6407, -84.4277),  # Atlanta Hartsfield
         "KBOS": (42.3656, -71.0096),  # Boston Logan
-        "KSEA": (47.4502, -122.3088), # Seattle-Tacoma
-        "KDEN": (39.8617, -104.6732), # Denver
+        "KSEA": (47.4502, -122.3088),  # Seattle-Tacoma
+        "KDEN": (39.8617, -104.6732),  # Denver
         "KDCA": (38.8521, -77.0377),  # Washington Reagan
-        "KSFO": (37.6188, -122.3750), # San Francisco
+        "KSFO": (37.6188, -122.3750),  # San Francisco
         "KMCO": (28.4294, -81.3089),  # Orlando
         # Canada / Mexico (5)
         "CYYZ": (43.6777, -79.6308),  # Toronto Pearson
-        "CYVR": (49.1947, -123.1792), # Vancouver
+        "CYVR": (49.1947, -123.1792),  # Vancouver
         "CYUL": (45.4706, -73.7408),  # Montreal Trudeau
         "MMMX": (19.4363, -99.0721),  # Mexico City
-        "MMGL": (20.5218, -103.3112), # Guadalajara
+        "MMGL": (20.5218, -103.3112),  # Guadalajara
         # South America (5)
-        "SBGR": (-23.4356, -46.4731), # São Paulo Guarulhos
-        "SBGL": (-22.8089, -43.2436), # Rio de Janeiro Galeão
-        "SAEZ": (-34.8222, -58.5358), # Buenos Aires Ezeiza
-        "SCEL": (-33.3930, -70.7858), # Santiago
-        "SPJC": (-12.0219, -77.1143), # Lima Jorge Chávez
+        "SBGR": (-23.4356, -46.4731),  # São Paulo Guarulhos
+        "SBGL": (-22.8089, -43.2436),  # Rio de Janeiro Galeão
+        "SAEZ": (-34.8222, -58.5358),  # Buenos Aires Ezeiza
+        "SCEL": (-33.3930, -70.7858),  # Santiago
+        "SPJC": (-12.0219, -77.1143),  # Lima Jorge Chávez
         # Europe (15)
-        "EGLL": (51.4700, -0.4543),   # London Heathrow
-        "LFPG": (49.0099, 2.5479),    # Paris Charles de Gaulle
-        "EDDT": (52.5597, 13.2877),   # Berlin Brandenburg
-        "UUEE": (55.9726, 37.4146),   # Moscow Sheremetyevo
-        "EDDF": (50.0379, 8.5622),    # Frankfurt
-        "EHAM": (52.3105, 4.7683),    # Amsterdam Schiphol
-        "LEMD": (40.4983, -3.5676),   # Madrid Barajas
-        "LIRF": (41.8003, 12.2389),   # Rome Fiumicino
-        "LEBL": (41.2974, 2.0833),    # Barcelona
-        "EDDM": (48.3538, 11.7861),   # Munich
-        "LSZH": (47.4581, 8.5480),    # Zurich
-        "LOWW": (48.1103, 16.5697),   # Vienna
-        "ESSA": (59.6498, 17.9294),   # Stockholm Arlanda
-        "LGAV": (37.9364, 23.9472),   # Athens Eleftherios
-        "LPPT": (38.7750, -9.1354),   # Lisbon
+        "EGLL": (51.4700, -0.4543),  # London Heathrow
+        "LFPG": (49.0099, 2.5479),  # Paris Charles de Gaulle
+        "EDDT": (52.5597, 13.2877),  # Berlin Brandenburg
+        "UUEE": (55.9726, 37.4146),  # Moscow Sheremetyevo
+        "EDDF": (50.0379, 8.5622),  # Frankfurt
+        "EHAM": (52.3105, 4.7683),  # Amsterdam Schiphol
+        "LEMD": (40.4983, -3.5676),  # Madrid Barajas
+        "LIRF": (41.8003, 12.2389),  # Rome Fiumicino
+        "LEBL": (41.2974, 2.0833),  # Barcelona
+        "EDDM": (48.3538, 11.7861),  # Munich
+        "LSZH": (47.4581, 8.5480),  # Zurich
+        "LOWW": (48.1103, 16.5697),  # Vienna
+        "ESSA": (59.6498, 17.9294),  # Stockholm Arlanda
+        "LGAV": (37.9364, 23.9472),  # Athens Eleftherios
+        "LPPT": (38.7750, -9.1354),  # Lisbon
         # Middle East (3)
-        "OMDB": (25.2532, 55.3657),   # Dubai
-        "LLBG": (32.0114, 34.8867),   # Tel Aviv Ben Gurion
-        "OTHH": (25.2731, 51.6081),   # Doha Hamad
+        "OMDB": (25.2532, 55.3657),  # Dubai
+        "LLBG": (32.0114, 34.8867),  # Tel Aviv Ben Gurion
+        "OTHH": (25.2731, 51.6081),  # Doha Hamad
         # Asia (12)
         "RJTT": (35.5533, 139.7811),  # Tokyo Haneda
         "RJOO": (34.7882, 135.4381),  # Osaka Itami
@@ -225,17 +241,17 @@ class Config:
         "RKSS": (37.4602, 126.4407),  # Seoul Gimpo
         "VHHH": (22.3080, 113.9185),  # Hong Kong
         "RCTP": (25.0764, 121.2338),  # Taipei Taoyuan
-        "WSSS": (1.3592, 103.9894),   # Singapore Changi
+        "WSSS": (1.3592, 103.9894),  # Singapore Changi
         "VTBS": (13.6926, 100.7501),  # Bangkok Suvarnabhumi
         "WIII": (-6.1256, 106.6559),  # Jakarta Soekarno-Hatta
-        "VABB": (19.0887, 72.8679),   # Mumbai Chhatrapati
-        "VIDP": (28.5562, 77.1000),   # Delhi Indira Gandhi
+        "VABB": (19.0887, 72.8679),  # Mumbai Chhatrapati
+        "VIDP": (28.5562, 77.1000),  # Delhi Indira Gandhi
         # Oceania (3)
-        "YSSY": (-33.9399, 151.1753), # Sydney Kingsford Smith
-        "YMML": (-37.6690, 144.8410), # Melbourne Tullamarine
-        "NZAA": (-37.0082, 174.7918), # Auckland
+        "YSSY": (-33.9399, 151.1753),  # Sydney Kingsford Smith
+        "YMML": (-37.6690, 144.8410),  # Melbourne Tullamarine
+        "NZAA": (-37.0082, 174.7918),  # Auckland
         # Africa (2)
-        "HECA": (30.1219, 31.4056),   # Cairo
+        "HECA": (30.1219, 31.4056),  # Cairo
         "FACT": (-33.9694, 18.5972),  # Cape Town
     }
 
@@ -377,14 +393,11 @@ def assert_config_consistency():
     # FEE_DRAG vs strategy.fee_drag
     if abs(Config.FEE_DRAG - bot_config.strategy.fee_drag) > 1e-9:
         _errors.append(
-            f"Config.FEE_DRAG ({Config.FEE_DRAG}) != "
-            f"bot_config.strategy.fee_drag ({bot_config.strategy.fee_drag})"
+            f"Config.FEE_DRAG ({Config.FEE_DRAG}) != bot_config.strategy.fee_drag ({bot_config.strategy.fee_drag})"
         )
 
     if _errors:
-        raise RuntimeError(
-            "Config/Strategy drift detected:\n" + "\n".join(_errors)
-        )
+        raise RuntimeError("Config/Strategy drift detected:\n" + "\n".join(_errors))
 
 
 assert_config_consistency()

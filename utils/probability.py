@@ -11,13 +11,14 @@ Usage::
 
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 logger = logging.getLogger("PROBABILITY")
 
 HAS_SCIPY: bool
 try:
     from scipy.stats import norm as _scipy_norm  # type: ignore[import-untyped]
+
     HAS_SCIPY = True
 except ImportError:
     HAS_SCIPY = False
@@ -138,6 +139,7 @@ def compute_effective_min_edge(market, std: float | None = None) -> float:
     (high-uncertainty guard for RANGE / high-spread markets).
     """
     from config.settings import bot_config
+
     s = bot_config.strategy
 
     # High-uncertainty guard: if inter-model spread > 2.5C, double
@@ -146,21 +148,19 @@ def compute_effective_min_edge(market, std: float | None = None) -> float:
         base = s.min_edge * 2.0
         logger.info(
             "High uncertainty guard: std=%.2f > 2.5, doubling min_edge to %.4f",
-            std, base,
+            std,
+            base,
         )
     else:
         base = s.min_edge
 
     try:
-        resolution = (
-            getattr(market, 'resolution_date', None)
-            or getattr(market, 'target_date', None)
-        )
+        resolution = getattr(market, "resolution_date", None) or getattr(market, "target_date", None)
         if resolution is None:
             return base
-        now = datetime.now(timezone.utc)
-        if getattr(resolution, 'tzinfo', None) is None:
-            resolution = resolution.replace(tzinfo=timezone.utc)
+        now = datetime.now(UTC)
+        if getattr(resolution, "tzinfo", None) is None:
+            resolution = resolution.replace(tzinfo=UTC)
         hours_left = (resolution - now).total_seconds() / 3600.0
     except Exception:
         return base
@@ -175,6 +175,4 @@ def compute_effective_min_edge(market, std: float | None = None) -> float:
         return base * s.edge_escalation_multiplier
     esc_h = max(1, s.edge_escalation_hours)
     fraction = hours_left / esc_h
-    return base * (
-        1.0 + (s.edge_escalation_multiplier - 1.0) * (1.0 - fraction)
-    )
+    return base * (1.0 + (s.edge_escalation_multiplier - 1.0) * (1.0 - fraction))

@@ -51,8 +51,7 @@ def test_low_is_complement():
             p_low = estimate_probability(mean, std=2.0, threshold=threshold, market_type="LOW")
             total = p_high + p_low
             assert abs(total - 1.0) < 1e-9, (
-                f"mean={mean}, threshold={threshold}: "
-                f"P_HIGH={p_high}, P_LOW={p_low}, sum={total}"
+                f"mean={mean}, threshold={threshold}: P_HIGH={p_high}, P_LOW={p_low}, sum={total}"
             )
 
 
@@ -69,9 +68,7 @@ def test_range_bucket():
     # Expected: normal_cdf(0.5) - normal_cdf(-0.5) = 0.6915 - 0.3085 = 0.3829
     expected_half = normal_cdf(0.5)  # ~0.6915
     expected = expected_half - (1.0 - expected_half)  # ~0.383
-    assert abs(p_range - expected) < 0.005, (
-        f"Expected ~{expected:.4f}, got {p_range}"
-    )
+    assert abs(p_range - expected) < 0.005, f"Expected ~{expected:.4f}, got {p_range}"
 
     # mean=21, threshold=18 → bucket far from mean → P <= 0.01 (clamp floor)
     p_far = estimate_probability(mean=21.0, std=1.0, threshold=18.0, market_type="RANGE")
@@ -141,9 +138,7 @@ def test_low_market_signal_direction():
             kelly_frac = 0.0
             recommended_side = None
 
-    assert recommended_side == "YES", (
-        f"Expected recommended_side='YES' for LOW market, got {recommended_side}"
-    )
+    assert recommended_side == "YES", f"Expected recommended_side='YES' for LOW market, got {recommended_side}"
     assert kelly_frac > 0, "Kelly fraction should be > 0 for positive-edge LOW"
 
 
@@ -168,6 +163,7 @@ def test_no_signal_when_fair():
 
     # Use the same min_edge threshold the bot uses
     from config.settings import bot_config
+
     min_edge = bot_config.strategy.min_edge
     should_bet = abs(edge) >= min_edge
 

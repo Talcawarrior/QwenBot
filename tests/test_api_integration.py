@@ -1,4 +1,4 @@
-﻿"""Integration tests for the FastAPI app exposed by main.py.
+"""Integration tests for the FastAPI app exposed by main.py.
 
 These tests exercise the HTTP layer end-to-end (no mocks of the app itself)
 against the live `data/bot.db` (SQLite, WAL mode, read-only open). The aim
@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 def client():
     """TestClient that talks to the real FastAPI app via in-process HTTP."""
     import main as app_module
+
     with TestClient(app_module.app) as c:
         yield c
 

@@ -1,9 +1,9 @@
-﻿"""Settlement engine: resolves bets via Polymarket Gamma API resolution."""
+"""Settlement engine: resolves bets via Polymarket Gamma API resolution."""
 # pylint: disable=import-error,broad-exception-caught
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import requests  # pylint: disable=import-error
 
@@ -41,7 +41,7 @@ class SettlementEngine:
         lost_count = 0
         pending_count = 0
         total_pnl = 0.0
-        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        now_naive = datetime.now(UTC).replace(tzinfo=None)
 
         with get_session() as session:
             open_statuses = ("open", "bet_placed")
@@ -71,7 +71,9 @@ class SettlementEngine:
                         total_pnl += result["pnl"]
                 except Exception as e:
                     logger.error(
-                        "Settlement error for market %s: %s", market.id, e,
+                        "Settlement error for market %s: %s",
+                        market.id,
+                        e,
                         exc_info=True,
                     )
                     pending_count += 1
@@ -85,12 +87,15 @@ class SettlementEngine:
                 if portfolio:
                     portfolio.total_value = portfolio.cash_balance
                     portfolio.current_value = portfolio.cash_balance
-                    portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
+                    portfolio.last_updated = datetime.now(UTC).replace(tzinfo=None)
                     sync_session.commit()
 
         logger.info(
             "Settlement complete: %s won, %s lost, %s pending, total_pnl=%.2f",
-            won_count, lost_count, pending_count, total_pnl,
+            won_count,
+            lost_count,
+            pending_count,
+            total_pnl,
         )
         return {
             "win": won_count,
@@ -131,7 +136,8 @@ class SettlementEngine:
 
         logger.info(
             "Market %s resolved by Polymarket: outcome=%s",
-            market.id, outcome,
+            market.id,
+            outcome,
         )
 
         # ── Settle bets ────────────────────────────────────────────────────
@@ -147,7 +153,7 @@ class SettlementEngine:
             else:
                 bet_lost_count += 1
             bet.status = "won" if bet_won else "lost"
-            bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            bet.settled_at = datetime.now(UTC).replace(tzinfo=None)
 
             stake = float(bet.amount or 0)
             entry_price = float(bet.entry_price or bet.price or 0.5)
@@ -171,16 +177,11 @@ class SettlementEngine:
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
             if portfolio:
                 if bet_won:
-                    credit_settlement(
-                        session, payout, fee,
-                        f"settle:{bet.market_id}:won"
-                    )
+                    credit_settlement(session, payout, fee, f"settle:{bet.market_id}:won")
                     portfolio.total_won = (portfolio.total_won or 0) + 1
                 else:
                     portfolio.total_lost = (portfolio.total_lost or 0) + 1
-                portfolio.total_realized_pnl = (
-                    (portfolio.total_realized_pnl or 0) + realized_pnl
-                )
+                portfolio.total_realized_pnl = (portfolio.total_realized_pnl or 0) + realized_pnl
 
         if any_settled:
             market.status = "settled_win" if outcome == "YES" else "settled_loss"
@@ -216,7 +217,9 @@ class SettlementEngine:
             no_price = float(prices[1])
         except (TypeError, ValueError):
             logger.warning(
-                "Non-numeric outcomePrices for %s: %s", market.id, prices,
+                "Non-numeric outcomePrices for %s: %s",
+                market.id,
+                prices,
             )
             return None
 
@@ -226,19 +229,21 @@ class SettlementEngine:
             outcome = "NO"
         else:
             logger.warning(
-                "Split/no-clear resolution for %s: outcomePrices=%s "
-                "(neither side >= 0.99)",
-                market.id, prices,
+                "Split/no-clear resolution for %s: outcomePrices=%s (neither side >= 0.99)",
+                market.id,
+                prices,
             )
             return None
 
-        market.raw_data = json.dumps({
-            "source": "polymarket",
-            "outcome": outcome,
-            "outcomePrices": prices,
-            "umaResolutionStatus": data.get("umaResolutionStatus"),
-            "settled_at": datetime.now(timezone.utc).isoformat(),
-        })
+        market.raw_data = json.dumps(
+            {
+                "source": "polymarket",
+                "outcome": outcome,
+                "outcomePrices": prices,
+                "umaResolutionStatus": data.get("umaResolutionStatus"),
+                "settled_at": datetime.now(UTC).isoformat(),
+            }
+        )
         return outcome
 
     def _call_gamma_api(self, market) -> dict | None:
@@ -250,7 +255,9 @@ class SettlementEngine:
             return resp.json()
         except requests.RequestException as e:
             logger.warning(
-                "Gamma API request failed for %s: %s", market.id, e,
+                "Gamma API request failed for %s: %s",
+                market.id,
+                e,
             )
             return None
 
@@ -263,12 +270,16 @@ class SettlementEngine:
             prices = json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
         except (json.JSONDecodeError, TypeError):
             logger.warning(
-                "Cannot parse outcomePrices for %s: %s", market.id, raw_prices,
+                "Cannot parse outcomePrices for %s: %s",
+                market.id,
+                raw_prices,
             )
             return None
         if not isinstance(prices, (list, tuple)) or len(prices) < 2:
             logger.warning(
-                "Invalid outcomePrices format for %s: %s", market.id, prices,
+                "Invalid outcomePrices format for %s: %s",
+                market.id,
+                prices,
             )
             return None
         return prices
@@ -280,7 +291,7 @@ class SettlementEngine:
         """Log an ERROR if a market has been pending longer than 48 hours."""
         if market.target_date and (now_naive - market.target_date) > timedelta(hours=48):
             logger.error(
-                "Market %s has been pending >48h (target=%s). "
-                "Gamma API may not have resolved it yet.",
-                market.id, market.target_date,
+                "Market %s has been pending >48h (target=%s). Gamma API may not have resolved it yet.",
+                market.id,
+                market.target_date,
             )

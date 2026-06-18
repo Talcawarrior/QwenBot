@@ -22,11 +22,11 @@ import importlib  # noqa: E402
 
 import database.db  # noqa: E402
 
-importlib.reload(database.db)  # noqa: E402
+importlib.reload(database.db)
 
 from database.db import get_session, init_db  # noqa: E402
 
-init_db()  # noqa: E402
+init_db()
 
 from database.models import Bet, Portfolio, WeatherMarket  # noqa: E402
 
@@ -64,34 +64,54 @@ def _setup_market_with_bets(
 
     with get_session() as session:
         pf = Portfolio(
-            id=1, cash_balance=1000.0, total_value=1000.0,
-            current_value=980.0, total_realized_pnl=0.0,
-            total_won=0, total_lost=0,
+            id=1,
+            cash_balance=1000.0,
+            total_value=1000.0,
+            current_value=980.0,
+            total_realized_pnl=0.0,
+            total_won=0,
+            total_lost=0,
         )
         session.add(pf)
 
         market = WeatherMarket(
             id=market_id,
             question="Test market",
-            city="TestCity", city_code="TEST",
-            metric="temperature_max", threshold=threshold,
-            target_date=target, yes_price=yes_price, no_price=no_price,
-            status="bet_placed", latitude=40.0, longitude=-70.0,
+            city="TestCity",
+            city_code="TEST",
+            metric="temperature_max",
+            threshold=threshold,
+            target_date=target,
+            yes_price=yes_price,
+            no_price=no_price,
+            status="bet_placed",
+            latitude=40.0,
+            longitude=-70.0,
             market_type="HIGH",
         )
         session.add(market)
 
         bet_yes = Bet(
-            market_id=market_id, side="YES", amount=stake,
-            price=entry_yes, entry_price=entry_yes, shares=shares_yes,
-            status="placed", unrealized_pnl=0.0,
+            market_id=market_id,
+            side="YES",
+            amount=stake,
+            price=entry_yes,
+            entry_price=entry_yes,
+            shares=shares_yes,
+            status="placed",
+            unrealized_pnl=0.0,
         )
         session.add(bet_yes)
 
         bet_no = Bet(
-            market_id=market_id, side="NO", amount=stake,
-            price=entry_no, entry_price=entry_no, shares=shares_no,
-            status="placed", unrealized_pnl=0.0,
+            market_id=market_id,
+            side="NO",
+            amount=stake,
+            price=entry_no,
+            entry_price=entry_no,
+            shares=shares_no,
+            status="placed",
+            unrealized_pnl=0.0,
         )
         session.add(bet_no)
 
@@ -129,6 +149,7 @@ class TestSettlementPolymarket:
                     outcome_prices=["1", "0"],
                 )
                 from executor.settler import SettlementEngine
+
                 engine = SettlementEngine()
                 results = engine.settle_all()
                 assert results["win"] == 1
@@ -136,12 +157,8 @@ class TestSettlementPolymarket:
                 assert results["pending"] == 0
 
             with get_session() as session:
-                b_yes = session.query(Bet).filter(
-                    Bet.market_id == "test-poly-001", Bet.side == "YES"
-                ).first()
-                b_no = session.query(Bet).filter(
-                    Bet.market_id == "test-poly-001", Bet.side == "NO"
-                ).first()
+                b_yes = session.query(Bet).filter(Bet.market_id == "test-poly-001", Bet.side == "YES").first()
+                b_no = session.query(Bet).filter(Bet.market_id == "test-poly-001", Bet.side == "NO").first()
 
                 # YES bet won
                 assert b_yes.status == "won"
@@ -155,9 +172,7 @@ class TestSettlementPolymarket:
                 assert b_no.status == "lost"
                 assert b_no.realized_pnl == -10.0
 
-                mkt = session.query(WeatherMarket).filter(
-                    WeatherMarket.id == "test-poly-001"
-                ).first()
+                mkt = session.query(WeatherMarket).filter(WeatherMarket.id == "test-poly-001").first()
                 assert mkt.status == "settled_win"
                 rd = json.loads(mkt.raw_data)
                 assert rd["source"] == "polymarket"
@@ -181,6 +196,7 @@ class TestSettlementPolymarket:
                     outcome_prices=["0", "1"],
                 )
                 from executor.settler import SettlementEngine
+
                 engine = SettlementEngine()
                 results = engine.settle_all()
                 assert results["win"] == 1
@@ -188,12 +204,8 @@ class TestSettlementPolymarket:
                 assert results["pending"] == 0
 
             with get_session() as session:
-                b_yes = session.query(Bet).filter(
-                    Bet.market_id == "test-poly-001", Bet.side == "YES"
-                ).first()
-                b_no = session.query(Bet).filter(
-                    Bet.market_id == "test-poly-001", Bet.side == "NO"
-                ).first()
+                b_yes = session.query(Bet).filter(Bet.market_id == "test-poly-001", Bet.side == "YES").first()
+                b_no = session.query(Bet).filter(Bet.market_id == "test-poly-001", Bet.side == "NO").first()
 
                 assert b_yes.status == "lost"
                 assert b_yes.realized_pnl == -10.0
@@ -205,9 +217,7 @@ class TestSettlementPolymarket:
                 expected_pnl = round(expected_payout - 10.0 - expected_fee, 2)
                 assert b_no.realized_pnl == expected_pnl
 
-                mkt = session.query(WeatherMarket).filter(
-                    WeatherMarket.id == "test-poly-001"
-                ).first()
+                mkt = session.query(WeatherMarket).filter(WeatherMarket.id == "test-poly-001").first()
                 assert mkt.status == "settled_loss"
 
                 pf_db = session.query(Portfolio).filter(Portfolio.id == 1).first()
@@ -222,16 +232,17 @@ class TestSettlementPolymarket:
         try:
             # Capture pre-settlement state
             with get_session() as session:
-                mkt_before = session.query(WeatherMarket).filter(
-                    WeatherMarket.id == "test-poly-001"
-                ).first()
+                mkt_before = session.query(WeatherMarket).filter(WeatherMarket.id == "test-poly-001").first()
                 assert mkt_before.status == "bet_placed"
 
             with patch("executor.settler.requests.get") as mock_get:
                 mock_get.return_value = _gamma_mock(
-                    closed=False, status="open", outcome_prices=None,
+                    closed=False,
+                    status="open",
+                    outcome_prices=None,
                 )
                 from executor.settler import SettlementEngine
+
                 engine = SettlementEngine()
                 results = engine.settle_all()
                 assert results["pending"] == 1
@@ -240,16 +251,12 @@ class TestSettlementPolymarket:
 
             with get_session() as session:
                 # Bet statuses unchanged
-                bets = session.query(Bet).filter(
-                    Bet.market_id == "test-poly-001"
-                ).all()
+                bets = session.query(Bet).filter(Bet.market_id == "test-poly-001").all()
                 for b in bets:
                     assert b.status in ("placed",), f"Bet {b.id} status changed: {b.status}"
 
                 # Market status unchanged
-                mkt = session.query(WeatherMarket).filter(
-                    WeatherMarket.id == "test-poly-001"
-                ).first()
+                mkt = session.query(WeatherMarket).filter(WeatherMarket.id == "test-poly-001").first()
                 assert mkt.status == "bet_placed"
                 assert mkt.raw_data is None
 
@@ -269,6 +276,7 @@ class TestSettlementPolymarket:
                     outcome_prices=["0.5", "0.5"],
                 )
                 from executor.settler import SettlementEngine
+
                 engine = SettlementEngine()
                 results = engine.settle_all()
                 assert results["pending"] == 1
@@ -276,9 +284,7 @@ class TestSettlementPolymarket:
                 assert results["loss"] == 0
 
             with get_session() as session:
-                bets = session.query(Bet).filter(
-                    Bet.market_id == "test-poly-001"
-                ).all()
+                bets = session.query(Bet).filter(Bet.market_id == "test-poly-001").all()
                 for b in bets:
                     assert b.status == "placed"
         finally:
@@ -291,6 +297,7 @@ class TestSettlementPolymarket:
             with patch("executor.settler.requests.get") as mock_get:
                 mock_get.side_effect = requests.ConnectionError("timeout")
                 from executor.settler import SettlementEngine
+
                 engine = SettlementEngine()
                 results = engine.settle_all()
                 assert results["pending"] == 1
@@ -298,14 +305,10 @@ class TestSettlementPolymarket:
                 assert results["loss"] == 0
 
             with get_session() as session:
-                bets = session.query(Bet).filter(
-                    Bet.market_id == "test-poly-001"
-                ).all()
+                bets = session.query(Bet).filter(Bet.market_id == "test-poly-001").all()
                 for b in bets:
                     assert b.status == "placed"
-                mkt = session.query(WeatherMarket).filter(
-                    WeatherMarket.id == "test-poly-001"
-                ).first()
+                mkt = session.query(WeatherMarket).filter(WeatherMarket.id == "test-poly-001").first()
                 assert mkt.status == "bet_placed"
         finally:
             _clean()
@@ -319,16 +322,13 @@ class TestSettlementPolymarket:
                     outcome_prices=["1", "0"],
                 )
                 from executor.settler import SettlementEngine
+
                 engine = SettlementEngine()
                 engine.settle_all()
 
             with get_session() as session:
-                b_yes = session.query(Bet).filter(
-                    Bet.market_id == "test-poly-001", Bet.side == "YES"
-                ).first()
-                b_no = session.query(Bet).filter(
-                    Bet.market_id == "test-poly-001", Bet.side == "NO"
-                ).first()
+                b_yes = session.query(Bet).filter(Bet.market_id == "test-poly-001", Bet.side == "YES").first()
+                b_no = session.query(Bet).filter(Bet.market_id == "test-poly-001", Bet.side == "NO").first()
                 pf_db = session.query(Portfolio).filter(Portfolio.id == 1).first()
 
                 # Win PnL
@@ -353,6 +353,3 @@ class TestSettlementPolymarket:
                 assert b_no.realized_pnl == loss_pnl
         finally:
             _clean()
-
-
-

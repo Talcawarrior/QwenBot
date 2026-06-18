@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 def retry(max_attempts=3, delay=2, backoff=2, exceptions=(Exception,)):
     """API calls retry decorator."""
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -25,9 +26,9 @@ def retry(max_attempts=3, delay=2, backoff=2, exceptions=(Exception,)):
                         )
                         time.sleep(wait)
                     else:
-                        logger.error(
-                            f"{func.__name__} FAILED after {max_attempts} attempts: {e}"
-                        )
+                        logger.error(f"{func.__name__} FAILED after {max_attempts} attempts: {e}")
             raise last_exception
+
         return wrapper
+
     return decorator

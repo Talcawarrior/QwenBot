@@ -32,9 +32,11 @@ class TestParseMarket(unittest.TestCase):
         self.assertIn(result["metric"], ["temperature_max", "temperature_min"])
         self.assertIsNotNone(result["city_code"])
         self.assertIn(result["market_type"], ["HIGH", "LOW"])
-        print(f"Parse OK: {result['id']} date={result['target_date']} "
-              f"threshold={result['threshold']:.1f} metric={result['metric']} "
-              f"city_code={result['city_code']} type={result['market_type']}")
+        print(
+            f"Parse OK: {result['id']} date={result['target_date']} "
+            f"threshold={result['threshold']:.1f} metric={result['metric']} "
+            f"city_code={result['city_code']} type={result['market_type']}"
+        )
 
     def test_parse_temperature_min(self):
         raw = {
@@ -54,8 +56,10 @@ class TestParseMarket(unittest.TestCase):
         # "below" + "lowest" => temperature_min, "below" => LOW
         self.assertEqual(result["metric"], "temperature_min")
         self.assertEqual(result["market_type"], "LOW")
-        print(f"Parse min OK: {result['id']} threshold={result['threshold']:.1f} "
-              f"metric={result['metric']} type={result['market_type']}")
+        print(
+            f"Parse min OK: {result['id']} threshold={result['threshold']:.1f} "
+            f"metric={result['metric']} type={result['market_type']}"
+        )
 
     def test_reject_rain(self):
         raw = {

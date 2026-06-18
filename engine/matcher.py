@@ -1,6 +1,5 @@
 """Piyasa ve meteoroloji lokasyon eşleştirme modülü."""
 
-
 from scrapers.polymarket import PolymarketScraper
 
 

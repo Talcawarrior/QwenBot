@@ -17,6 +17,7 @@ These tests pin the contract:
 * a Polymarket-shaped input (high model prob, low market price)
   produces a positive Kelly fraction, not zero.
 """
+
 import pytest
 
 from engine.calculator import Calculator
@@ -76,10 +77,10 @@ def test_matches_original_implementation():
 @pytest.mark.parametrize(
     "prob,price,expected",
     [
-        (0.55, 0.50, 0.015),     # edge 5%: 15% of 0.10 = 0.015
-        (0.60, 0.40, 0.05),      # 1.5*0.6-0.4=0.5; 0.5/1.5*0.15=0.05
+        (0.55, 0.50, 0.015),  # edge 5%: 15% of 0.10 = 0.015
+        (0.60, 0.40, 0.05),  # 1.5*0.6-0.4=0.5; 0.5/1.5*0.15=0.05
         (0.75, 0.20, 0.103125),  # 4*0.75-0.25=2.75; 2.75/4*0.15=0.103125
-        (0.90, 0.10, 0.1333),    # 9*0.9-0.1=8; 8/9*0.15=0.1333
+        (0.90, 0.10, 0.1333),  # 9*0.9-0.1=8; 8/9*0.15=0.1333
     ],
 )
 def test_polymarket_shaped_inputs(prob, price, expected):

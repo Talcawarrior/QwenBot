@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiohttp
 
@@ -93,13 +93,12 @@ class Calculator:
             # Price sanity check - skip invalid binary markets
             if not is_valid_binary_price(market.yes_price or 0, market.no_price or 0):
                 logger.debug(
-                    f"Market {market_id}: invalid prices "
-                    f"yes={market.yes_price}, no={market.no_price}, skipping"
+                    f"Market {market_id}: invalid prices yes={market.yes_price}, no={market.no_price}, skipping"
                 )
                 return None
 
             # Skip already-resolved markets (lookahead bias guard)
-            if market.target_date <= datetime.now(timezone.utc).replace(tzinfo=None):
+            if market.target_date <= datetime.now(UTC).replace(tzinfo=None):
                 logger.debug(f"Market {market_id}: target_date {market.target_date} already passed, skipping")
                 return None
 
@@ -111,10 +110,15 @@ class Calculator:
                 return None
 
             # En son tahminleri al — query by market.metric directly.
-            forecasts = session.query(WeatherForecast).filter(
-                WeatherForecast.market_id == market_id,
-                WeatherForecast.metric == market.metric,
-            ).order_by(WeatherForecast.fetched_at.desc()).all()
+            forecasts = (
+                session.query(WeatherForecast)
+                .filter(
+                    WeatherForecast.market_id == market_id,
+                    WeatherForecast.metric == market.metric,
+                )
+                .order_by(WeatherForecast.fetched_at.desc())
+                .all()
+            )
 
             # Her kaynaktan en son tahmini al
             latest_by_source = {}
@@ -126,23 +130,19 @@ class Calculator:
 
             if len(forecast_values) < bot_config.strategy.min_sources:
                 logger.info(
-                    f"Market {market_id}: Yetersiz kaynak "
-                    f"({len(forecast_values)}/{bot_config.strategy.min_sources})"
+                    f"Market {market_id}: Yetersiz kaynak ({len(forecast_values)}/{bot_config.strategy.min_sources})"
                 )
 
             # Compute std early — needed for both consensus and per-model probs
             if forecast_values and len(forecast_values) > 1:
                 avg = sum(forecast_values) / len(forecast_values)
-                std_val = math.sqrt(
-                    sum((x - avg) ** 2 for x in forecast_values)
-                    / len(forecast_values)
-                )
+                std_val = math.sqrt(sum((x - avg) ** 2 for x in forecast_values) / len(forecast_values))
             else:
                 std_val = None
 
             # days_ahead: use calendar days (>=0) and treat "today" as 1 day
             # so that (target_date=23:59:59, now=04:21) -> 0 still means "today".
-            days_ahead = (market.target_date - datetime.now(timezone.utc).replace(tzinfo=None)).days
+            days_ahead = (market.target_date - datetime.now(UTC).replace(tzinfo=None)).days
             days_ahead_for_check = max(days_ahead, 1)
 
             # Olasılık hesapla — market_type-aware
@@ -163,11 +163,7 @@ class Calculator:
             )
 
             # Per-model probabilities for SIA weight optimization
-            model_temps = {
-                src: float(val)
-                for src, val in latest_by_source.items()
-                if val is not None
-            }
+            model_temps = {src: float(val) for src, val in latest_by_source.items() if val is not None}
             total_std = float(std_val) if std_val is not None else 2.0
             model_probs = {}
             for mn, mt in model_temps.items():
@@ -179,20 +175,19 @@ class Calculator:
                     market_type=(market.market_type or "HIGH"),
                 )
                 model_probs[mn] = mp
-            model_predictions_json = json.dumps({
-                "model_temps": model_temps,
-                "model_probs": model_probs,
-            })
+            model_predictions_json = json.dumps(
+                {
+                    "model_temps": model_temps,
+                    "model_probs": model_probs,
+                }
+            )
 
             market_implied = market.yes_price or 0.5
             edge = estimated_prob - market_implied
 
             if edge > 0:
                 # YES tarafı
-                kelly_frac = self.kelly_criterion(
-                    estimated_prob, market_implied,
-                    bot_config.strategy.kelly_fraction
-                )
+                kelly_frac = self.kelly_criterion(estimated_prob, market_implied, bot_config.strategy.kelly_fraction)
                 recommended_side = "YES"
             else:
                 # NO tarafı
@@ -201,10 +196,7 @@ class Calculator:
                 no_edge = no_prob - no_implied
 
                 if no_edge > 0:
-                    kelly_frac = self.kelly_criterion(
-                        no_prob, no_implied,
-                        bot_config.strategy.kelly_fraction
-                    )
+                    kelly_frac = self.kelly_criterion(no_prob, no_implied, bot_config.strategy.kelly_fraction)
                     recommended_side = "NO"
                     edge = no_edge
                 else:
@@ -214,10 +206,7 @@ class Calculator:
             # Bet miktarı — gerçek portföyden oku
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
             bankroll = portfolio.total_value if portfolio and portfolio.total_value else 1000.0
-            recommended_amount = min(
-                kelly_frac * bankroll,
-                bot_config.strategy.max_bet_amount
-            )
+            recommended_amount = min(kelly_frac * bankroll, bot_config.strategy.max_bet_amount)
 
             # Bet açılmalı mı?
             # NOTE: Polymarket'te public-search'ten gelen marketlerin
@@ -228,9 +217,8 @@ class Calculator:
             # Yine de kullanıcı isterse `bot_config.strategy.min_liquidity`
             # değerini 0 yaparak bunu bypass edebilir.
             liquidity_ok = (
-                (market.liquidity or 0) >= bot_config.strategy.min_liquidity
-                or bot_config.strategy.min_liquidity <= 0
-            )
+                market.liquidity or 0
+            ) >= bot_config.strategy.min_liquidity or bot_config.strategy.min_liquidity <= 0
             effective_min_edge = self._compute_effective_min_edge(market, std_val)
             should_bet = (
                 abs(edge) >= effective_min_edge
@@ -271,7 +259,7 @@ class Calculator:
                 should_bet=should_bet,
                 reason=reason,
                 model_predictions=model_predictions_json,
-                analyzed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                analyzed_at=datetime.now(UTC).replace(tzinfo=None),
             )
             session.add(analysis)
             logger.info(
@@ -281,11 +269,11 @@ class Calculator:
             )
             return analysis
 
-
     @staticmethod
     def _compute_effective_min_edge(market, std: float | None = None) -> float:
         """Time-to-close-scaled min_edge. Delegates to utils.probability."""
         return compute_effective_min_edge(market, std=std)
+
 
 # WeatherEngine kept for seamless FastAPI / backward compatibility
 OPEN_METEO_MODEL_MAP = {
@@ -323,7 +311,6 @@ class WeatherEngine:
         """Return the time-to-close-scaled min_edge. Delegates to utils.probability."""
         return compute_effective_min_edge(market, std=std)
 
-
     async def start(self):
         if self.session is None:
             self.session = aiohttp.ClientSession()
@@ -346,7 +333,7 @@ class WeatherEngine:
         if not city_code or (latitude == 0 and longitude == 0):
             return None
         if target_date is None:
-            target_date = datetime.now(timezone.utc).replace(tzinfo=None)
+            target_date = datetime.now(UTC).replace(tzinfo=None)
 
         api_model_names = []
         for internal_name in self.model_weights.keys():
@@ -428,33 +415,36 @@ class WeatherEngine:
                 return None
             weighted_mean = sum(self.model_weights.get(m, 0.0) * t for m, t in model_temps.items()) / total_weight
             weighted_var = (
-                sum(self.model_weights.get(m, 0.0) * (t - weighted_mean)**2
-                    for m, t in model_temps.items())
+                sum(self.model_weights.get(m, 0.0) * (t - weighted_mean) ** 2 for m, t in model_temps.items())
                 / total_weight
             )
-            weighted_std = max(weighted_var ** 0.5, 0.5)
+            weighted_std = max(weighted_var**0.5, 0.5)
 
             if db_session is not None and market_ids:
                 from database.models import WeatherForecast
+
                 for mid in market_ids:
                     for mn, tmp in model_temps.items():
-                        db_session.add(WeatherForecast(
-                            market_id=mid,
-                            city=city_code,
-                            lat=latitude,
-                            lon=longitude,
-                            target_date=target_date,
-                            metric=metric,
-                            source=mn,
-                            predicted_value=float(tmp),
-                            model_weight=self.model_weights.get(mn, 0.0),
-                            fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                            raw_data=str({"model": mn, "temp": tmp, "ensemble": True})
-                        ))
+                        db_session.add(
+                            WeatherForecast(
+                                market_id=mid,
+                                city=city_code,
+                                lat=latitude,
+                                lon=longitude,
+                                target_date=target_date,
+                                metric=metric,
+                                source=mn,
+                                predicted_value=float(tmp),
+                                model_weight=self.model_weights.get(mn, 0.0),
+                                fetched_at=datetime.now(UTC).replace(tzinfo=None),
+                                raw_data=str({"model": mn, "temp": tmp, "ensemble": True}),
+                            )
+                        )
                 try:
                     db_session.commit()
-                    logger.info("Ensemble persisted for %d markets, coords=(%s, %s)",
-                                len(market_ids), latitude, longitude)
+                    logger.info(
+                        "Ensemble persisted for %d markets, coords=(%s, %s)", len(market_ids), latitude, longitude
+                    )
                 except Exception as e:
                     db_session.rollback()
                     logger.error("Failed to persist ensemble: %s", e)
@@ -464,7 +454,7 @@ class WeatherEngine:
                 "weighted_std": weighted_std,
                 "model_count": len(model_temps),
                 "model_temps": model_temps,
-                "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
+                "timestamp": datetime.now(UTC).replace(tzinfo=None),
             }
         except Exception as e:
             logger.error("get_multi_model_forecast error: %s", e)
@@ -476,6 +466,7 @@ class WeatherEngine:
         db = self.db_session_factory()
         try:
             from database.models import WeatherForecast
+
             fcs = (
                 db.query(WeatherForecast)
                 .filter(WeatherForecast.market_id == market_id)
@@ -493,10 +484,10 @@ class WeatherEngine:
             if tw <= 0:
                 vs = [v for v, _ in lat.values()]
                 m = sum(vs) / len(vs)
-                s = max((sum((v-m)**2 for v in vs)/len(vs))**0.5, 0.5) if len(vs)>1 else 1.0
+                s = max((sum((v - m) ** 2 for v in vs) / len(vs)) ** 0.5, 0.5) if len(vs) > 1 else 1.0
                 return {"weighted_mean": m, "weighted_std": s}
-            wm = sum(v*w for v,w in lat.values()) / tw
-            wv = sum(w*(v-wm)**2 for v,w in lat.values()) / tw
+            wm = sum(v * w for v, w in lat.values()) / tw
+            wv = sum(w * (v - wm) ** 2 for v, w in lat.values()) / tw
             return {"weighted_mean": wm, "weighted_std": max(wv**0.5, 0.5)}
         except Exception:
             return None
@@ -532,7 +523,10 @@ class WeatherEngine:
         )
 
     async def get_forecast(
-        self, city_code: str, latitude: float, longitude: float,
+        self,
+        city_code: str,
+        latitude: float,
+        longitude: float,
         target_date: datetime | None = None,
     ) -> dict | None:
         return await self.get_multi_model_forecast(city_code, latitude, longitude, target_date)

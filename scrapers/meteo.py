@@ -3,7 +3,7 @@
 import logging
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import requests
 
@@ -226,8 +226,8 @@ class MeteoFetcher:
                                 metric=metric,
                                 source=source_name,
                                 predicted_value=predicted_value,
-                                fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                                raw_data=str(result)
+                                fetched_at=datetime.now(UTC).replace(tzinfo=None),
+                                raw_data=str(result),
                             )
                             session.add(forecast)
                         session.commit()
@@ -267,14 +267,10 @@ class MeteoFetcher:
             # We fetch both MAX and MIN in one call, so grouping by date is enough.
             # bucket[key] = list of (market_id, metric)
             groups = defaultdict(list)
-            group_info = {} # key -> (city, city_code, target_date, lat, lon)
+            group_info = {}  # key -> (city, city_code, target_date, lat, lon)
 
             for m in open_markets:
-                key = (
-                    round(m.latitude or 0.0, 4),
-                    round(m.longitude or 0.0, 4),
-                    m.target_date.strftime("%Y-%m-%d")
-                )
+                key = (round(m.latitude or 0.0, 4), round(m.longitude or 0.0, 4), m.target_date.strftime("%Y-%m-%d"))
                 groups[key].append((m.id, m.metric or "temperature_max"))
                 if key not in group_info:
                     group_info[key] = (
@@ -282,7 +278,7 @@ class MeteoFetcher:
                         m.city_code or "",
                         m.target_date,
                         m.latitude or 0.0,
-                        m.longitude or 0.0
+                        m.longitude or 0.0,
                     )
 
         total = 0
@@ -339,9 +335,7 @@ class MeteoFetcher:
 
         return total
 
-    def _parallel_fetch_sources(
-        self, lat: float, lon: float, target_date: str
-    ) -> dict[str, dict | None]:
+    def _parallel_fetch_sources(self, lat: float, lon: float, target_date: str) -> dict[str, dict | None]:
         """Fetch Open-Meteo + WeatherAPI concurrently via AsyncHttpClient.
 
         Returns a dict keyed by source name with the same shape as the
@@ -368,7 +362,7 @@ class MeteoFetcher:
     # without keeping an alias, which broke the test contract.
     # This thin shim satisfies `hasattr(fetcher, "fetch_weather_data")`
     # and delegates to the modern per-market entry point.
-    def fetch_weather_data(self, *args, **kwargs):  # noqa: D401 - compat shim
+    def fetch_weather_data(self, *args, **kwargs):
         """Deprecated: use :meth:`fetch_for_market` instead.
 
         Kept for backward compatibility with the pre-refactor public API

@@ -1,6 +1,6 @@
 """ASIAbot Unified Server and CLI.
 
-Extends QwenBot with the ASI-Evolve framework and high-fidelity 
+Extends QwenBot with the ASI-Evolve framework and high-fidelity
 prediction-market data ingestion.
 """
 
@@ -8,7 +8,6 @@ import argparse
 import asyncio
 import logging
 import os
-import sys
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -16,14 +15,12 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 
-from config.logging_config import setup_logging
-from config.settings import config, bot_config
-from database.db import ensure_initial_portfolio, get_db_session, get_db_session_factory, init_db
-from database.models import OPEN_BET_STATUSES, Analysis, Bet, Portfolio, WeatherMarket
-from utils.price_sanity import safe_ev
-
 # Import ASIAbot modules
 from asi_engine.orchestrator import ASIAbotOrchestrator
+from config.logging_config import setup_logging
+from config.settings import bot_config, config
+from database.db import ensure_initial_portfolio, get_db_session, init_db
+from database.models import OPEN_BET_STATUSES, Analysis, Bet, Portfolio
 from utils.weights_store import load_weights
 
 setup_logging()
@@ -40,7 +37,7 @@ class ASIAbotState:
         self.websocket_clients: list[WebSocket] = []
         self.tasks = {}
         self.start_stop_lock = asyncio.Lock()
-        
+
         # ASIAbot Orchestrator
         self.orchestrator = None
 
@@ -93,15 +90,14 @@ async def root():
 async def get_status():
     """Serve status including evolved strategy limits."""
     from sqlalchemy import func
+
     db = get_db_session()
     try:
         portfolio = db.query(Portfolio).filter(Portfolio.id == 1).first()
-        
+
         # Calculate Realized & Unrealized PnL
         realized_pnl = (
-            db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
-            .filter(Bet.status.in_(("won", "lost", "settled")))
-            .scalar()
+            db.query(func.coalesce(func.sum(Bet.pnl), 0.0)).filter(Bet.status.in_(("won", "lost", "settled"))).scalar()
         ) or 0.0
 
         unrealized_pnl = (
@@ -116,14 +112,12 @@ async def get_status():
         total_signals = db.query(Analysis).filter(Analysis.should_bet.is_(True)).count()
 
         exposure = (
-            db.query(func.coalesce(func.sum(Bet.amount), 0.0))
-            .filter(Bet.status.in_(OPEN_BET_STATUSES))
-            .scalar()
+            db.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(OPEN_BET_STATUSES)).scalar()
         ) or 0.0
 
         initial_capital = config.INITIAL_PORTFOLIO
         total_pnl = realized_pnl + unrealized_pnl
-        
+
         # Calculate ROI
         total_stake_settled = (
             db.query(func.coalesce(func.sum(Bet.amount), 0.0))
@@ -188,7 +182,7 @@ async def run_asi_evolve():
     """Run an autonomous evolution pipeline round (5 rounds)."""
     if not state.orchestrator:
         state.orchestrator = ASIAbotOrchestrator()
-    
+
     # Run the evolution loop in an async executor to prevent blocking
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(None, state.orchestrator.run_evolution_pipeline, 5)
@@ -199,24 +193,28 @@ async def run_asi_evolve():
 @app.get("/api/markets")
 async def get_markets():
     from main import get_markets as _gm
+
     return await _gm()
 
 
 @app.get("/api/bets")
 async def get_bets(status: str = "", limit: int = 100, offset: int = 0):
     from main import get_bets as _gb
+
     return await _gb(status, limit, offset)
 
 
 @app.get("/api/signals")
 async def get_signals():
     from main import get_signals as _gs
+
     return await _gs()
 
 
 @app.get("/api/history")
 async def get_history():
     from main import get_history as _gh
+
     return await _gh()
 
 
@@ -226,9 +224,10 @@ async def start_bot():
         if state.is_running:
             return {"status": "already_running"}
         state.is_running = True
-        
+
         # Start background tasks from main
         from main import scan_and_bet_loop, settlement_loop
+
         state.tasks["scan_and_bet"] = asyncio.create_task(scan_and_bet_loop())
         state.tasks["settlement"] = asyncio.create_task(settlement_loop())
         return {"status": "started"}
@@ -249,6 +248,7 @@ async def stop_bot():
 async def reset_bot():
     await stop_bot()
     from main import reset_bot as _rb
+
     return await _rb()
 
 
@@ -267,7 +267,9 @@ async def websocket_endpoint(websocket: WebSocket):
 def run_cli():
     """CLI entry point for ASIAbot."""
     parser = argparse.ArgumentParser(description="ASIAbot CLI Interface")
-    parser.add_argument("command", choices=["run", "evolve", "fetch", "weather", "analyze", "bet", "settle", "report", "reset"])
+    parser.add_argument(
+        "command", choices=["run", "evolve", "fetch", "weather", "analyze", "bet", "settle", "report", "reset"]
+    )
     args = parser.parse_args()
 
     init_db()
@@ -287,11 +289,11 @@ def run_cli():
             run_analyze,
             run_fetch_markets,
             run_fetch_weather,
-            run_parse_markets,
             run_place_bets,
             run_report,
             run_settle,
         )
+
         cmds = {
             "fetch": run_fetch_markets,
             "weather": run_fetch_weather,
@@ -299,7 +301,7 @@ def run_cli():
             "bet": run_place_bets,
             "settle": run_settle,
             "report": run_report,
-            "reset": lambda: "System reset completed. Run run/evolve next."
+            "reset": lambda: "System reset completed. Run run/evolve next.",
         }
         if args.command in cmds:
             print(cmds[args.command]())

@@ -19,6 +19,7 @@ def fresh_db(tmp_path):
     # Patch database.db to use our test engine
     import config.settings as settings_mod
     import database.db as db_mod
+
     original_engine = db_mod.engine
     original_session_factory = db_mod.SessionLocal
     db_mod.engine = engine
@@ -94,10 +95,7 @@ def test_cli_reset_creates_portfolio_if_missing(fresh_db):
         .filter(Bet.status.in_(OPEN_BET_STATUSES))
         .update({"status": "cancelled"}, synchronize_session=False)
     )
-    (
-        session.query(AnalysisModel)
-        .delete(synchronize_session=False)
-    )
+    (session.query(AnalysisModel).delete(synchronize_session=False))
 
     pf = session.query(PortfolioModel).filter(PortfolioModel.id == 1).first()
     if not pf:

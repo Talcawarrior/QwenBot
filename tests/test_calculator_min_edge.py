@@ -6,7 +6,8 @@ stalled for 6+ hours with AttributeError on every scan cycle. This
 test guards the Calculator side of the same logic so the same
 mistake can't be made again on the other class.
 """
-from datetime import datetime, timedelta, timezone
+
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from config.settings import bot_config
@@ -14,9 +15,7 @@ from engine.calculator import Calculator
 
 
 def _market(hours_from_now: float) -> SimpleNamespace:
-    return SimpleNamespace(
-        resolution_date=datetime.now(timezone.utc) + timedelta(hours=hours_from_now)
-    )
+    return SimpleNamespace(resolution_date=datetime.now(UTC) + timedelta(hours=hours_from_now))
 
 
 def test_calculator_static_method_exists():
@@ -47,6 +46,7 @@ def test_calculator_no_target_date_returns_min_edge():
 
 def test_calculator_zero_escalation_hours_does_not_div_by_zero():
     from config.settings import StrategyConfig
+
     s = StrategyConfig(edge_escalation_hours=0, edge_escalation_multiplier=2.0)
     original = bot_config.strategy
     try:

@@ -1,8 +1,9 @@
-import json
-from datetime import datetime, timezone
+from datetime import datetime
+
 from database.db import get_session
-from database.models import WeatherMarket, Bet, Portfolio
+from database.models import Bet, Portfolio, WeatherMarket
 from executor.settler import SettlementEngine
+
 
 def run_live_settlement_test():
     print("Setting up live market 2513866 with 'bet_placed' status...")
@@ -19,7 +20,7 @@ def run_live_settlement_test():
                 target_date=datetime(2026, 6, 13, 23, 59, 59),
                 yes_price=0.01,
                 no_price=0.99,
-                status="bet_placed"
+                status="bet_placed",
             )
             session.add(market)
         else:
@@ -31,28 +32,16 @@ def run_live_settlement_test():
         # So we expect it to LOSE (since outcome is NO)
         # Delete existing bets on this market first to avoid duplicates
         session.query(Bet).filter(Bet.market_id == "2513866").delete()
-        
+
         bet_yes = Bet(
-            market_id="2513866",
-            side="YES",
-            amount=10.0,
-            price=0.20,
-            entry_price=0.20,
-            shares=50.0,
-            status="placed"
+            market_id="2513866", side="YES", amount=10.0, price=0.20, entry_price=0.20, shares=50.0, status="placed"
         )
         session.add(bet_yes)
 
         # Create a paper bet on NO for this market
         # So we expect it to WIN (since outcome is NO)
         bet_no = Bet(
-            market_id="2513866",
-            side="NO",
-            amount=10.0,
-            price=0.80,
-            entry_price=0.80,
-            shares=12.5,
-            status="placed"
+            market_id="2513866", side="NO", amount=10.0, price=0.80, entry_price=0.80, shares=12.5, status="placed"
         )
         session.add(bet_no)
         session.commit()
@@ -80,6 +69,7 @@ def run_live_settlement_test():
         print(f"  - NO Bet Status: {b_no.status} | Realized PnL: ${b_no.realized_pnl:+.2f}")
         print(f"  - Portfolio Cash Balance: ${pf.cash_balance:.2f}")
         print(f"  - Portfolio Total Realized PnL: ${pf.total_realized_pnl:+.2f}")
+
 
 if __name__ == "__main__":
     run_live_settlement_test()

@@ -1,9 +1,9 @@
-﻿"""Bet placement executor making paper or live trades on Polymarket."""
+"""Bet placement executor making paper or live trades on Polymarket."""
 
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import func
 
@@ -26,6 +26,7 @@ class BetPlacer:
         #   engine/strategy.py  ->  imports from this module
         #   executor/bet_placer.py  ->  uses engine.strategy.RiskManager
         from engine.strategy import RiskManager
+
         self.risk_manager = RiskManager()
 
         # Hard guard: the user requires paper-only mode.
@@ -42,6 +43,7 @@ class BetPlacer:
         """Polymarket CLOB client hazirla (sadece DRY_RUN=false ise cagrilir)."""
         try:
             from py_clob_client.client import ClobClient  # pylint: disable=import-error,no-name-in-module
+
             if not bot_config.polymarket.private_key:
                 self.ready = False
                 logger.info("Polymarket credentials not found, running in PAPER/SIMULATION trade mode.")
@@ -55,13 +57,11 @@ class BetPlacer:
             self.client.set_api_creds(self.client.create_or_derive_api_creds())
             self.ready = True
             logger.warning(
-                "LIVE TRADING ARMED -- DRY_RUN=false and credentials present. "
-                "Real orders will be sent to Polymarket."
+                "LIVE TRADING ARMED -- DRY_RUN=false and credentials present. Real orders will be sent to Polymarket."
             )
         except Exception as e:
             logger.warning(f"Polymarket client kurulamadi (PAPER TRADE ACTIVE): {e}")
             self.ready = False
-
 
     def place_bet(self, analysis_id: int) -> Bet | None:
         """Analiz sonucuna göre bet aç."""
@@ -70,22 +70,19 @@ class BetPlacer:
             if not analysis or not analysis.should_bet:
                 return None
 
-            market = session.query(WeatherMarket).filter_by(
-                id=analysis.market_id
-            ).first()
+            market = session.query(WeatherMarket).filter_by(id=analysis.market_id).first()
             if not market:
                 return None
 
             # Price sanity check - skip invalid binary markets
             if not is_valid_binary_price(market.yes_price or 0, market.no_price or 0):
                 logger.debug(
-                    f"Market {market.id}: invalid prices "
-                    f"yes={market.yes_price}, no={market.no_price}, skipping bet"
+                    f"Market {market.id}: invalid prices yes={market.yes_price}, no={market.no_price}, skipping bet"
                 )
                 return None
 
             # Guard: skip resolved markets
-            _now = datetime.now(timezone.utc).replace(tzinfo=None)
+            _now = datetime.now(UTC).replace(tzinfo=None)
             if market.target_date and market.target_date <= _now:
                 logger.debug(f"Market {market.id}: target_date passed, skipping")
                 return None
@@ -98,10 +95,11 @@ class BetPlacer:
                 return None
 
             # Zaten bet açılmış mı?
-            existing = session.query(Bet).filter(
-                Bet.market_id == analysis.market_id,
-                Bet.status.in_(self._OPEN_STATUSES)
-            ).first()
+            existing = (
+                session.query(Bet)
+                .filter(Bet.market_id == analysis.market_id, Bet.status.in_(self._OPEN_STATUSES))
+                .first()
+            )
             if existing:
                 logger.info(f"Market {market.id} already has a bet")
                 return None
@@ -114,7 +112,8 @@ class BetPlacer:
             _realized = float(
                 session.query(func.coalesce(func.sum(Bet.pnl), 0.0))
                 .filter(Bet.status.in_(("won", "lost", "settled")))
-                .scalar() or 0.0
+                .scalar()
+                or 0.0
             )
             self.risk_manager.update_portfolio(_initial + _realized)
 
@@ -135,17 +134,14 @@ class BetPlacer:
             flat_bet = float(getattr(self.risk_manager.config, "FLAT_BET_USD", 0.0) or 0.0)
             if flat_bet > 0.0:
                 logger.info(
-                    f"Flat-bet override active: ${flat_bet:.2f} per bet "
-                    f"(was ${proposed_amount:.2f} from Kelly)."
+                    f"Flat-bet override active: ${flat_bet:.2f} per bet (was ${proposed_amount:.2f} from Kelly)."
                 )
                 proposed_amount = flat_bet
 
             # Cap 1: per-bet cap (MAX_BET_PCT * portfolio). The engine's
             # Kelly sizing already enforces this in calculator.py, but
             # we re-apply it here as a hard ceiling.
-            max_bet = float(self.risk_manager.portfolio_value) * float(
-                self.risk_manager.config.MAX_BET_PCT
-            )
+            max_bet = float(self.risk_manager.portfolio_value) * float(self.risk_manager.config.MAX_BET_PCT)
             if proposed_amount > max_bet:
                 logger.warning(
                     f"Risk cap: Market {market.id} amount ${proposed_amount:.2f} "
@@ -163,9 +159,9 @@ class BetPlacer:
             ) or 0.0
             current_exposure = float(current_exposure)
             if not self.risk_manager.check_exposure_cap(current_exposure, proposed_amount):
-                max_exposure = float(
-                    self.risk_manager.portfolio_value
-                ) * float(self.risk_manager.config.TOTAL_EXPOSURE_PCT)
+                max_exposure = float(self.risk_manager.portfolio_value) * float(
+                    self.risk_manager.config.TOTAL_EXPOSURE_PCT
+                )
                 logger.warning(
                     f"Risk cap: Market {market.id} rejected — exposure would "
                     f"reach ${current_exposure + proposed_amount:.2f}, "
@@ -183,8 +179,7 @@ class BetPlacer:
                     price=market.yes_price if analysis.recommended_side == "YES" else market.no_price,
                     status="rejected",
                     error_message=(
-                        f"Exposure cap: ${current_exposure:.2f} + "
-                        f"${proposed_amount:.2f} > ${max_exposure:.2f}"
+                        f"Exposure cap: ${current_exposure:.2f} + ${proposed_amount:.2f} > ${max_exposure:.2f}"
                     ),
                 )
                 session.add(rejected)
@@ -224,11 +219,7 @@ class BetPlacer:
                 return None
 
             # Resolve fill price for the chosen side
-            fill_price = (
-                market.yes_price
-                if analysis.recommended_side == "YES"
-                else market.no_price
-            )
+            fill_price = market.yes_price if analysis.recommended_side == "YES" else market.no_price
             fill_price = float(fill_price) if fill_price is not None else 0.0
             # Shares = amount / price (position size in contracts)
             shares = (proposed_amount / fill_price) if fill_price > 0 else 0.0
@@ -238,14 +229,14 @@ class BetPlacer:
             bet = Bet(
                 market_id=analysis.market_id,
                 analysis_id=analysis_id,
-                city=market.city,               # FIX: copy city from market so the
-                city_code=market.city_code,     # dashboard "City" column is populated
+                city=market.city,  # FIX: copy city from market so the
+                city_code=market.city_code,  # dashboard "City" column is populated
                 side=analysis.recommended_side,
                 amount=proposed_amount,
                 price=fill_price,
-                entry_price=fill_price,        # NEW: source of truth for PNL math
-                shares=shares,                  # NEW: needed for unrealized_pnl
-                current_price=fill_price,       # NEW: starts equal to entry, refreshed by run_update_prices
+                entry_price=fill_price,  # NEW: source of truth for PNL math
+                shares=shares,  # NEW: needed for unrealized_pnl
+                current_price=fill_price,  # NEW: starts equal to entry, refreshed by run_update_prices
                 status="pending",
                 fair_value=fair_value,
                 expected_value=float(analysis.edge or 0.0),
@@ -268,13 +259,15 @@ class BetPlacer:
                     # Clamp price to [0.01, 0.99]
                     lvl_price = max(0.01, min(0.99, round(lvl_price, 4)))
                     lvl_shares = round(lvl_amount / lvl_price, 4) if lvl_price > 0 else 0.0
-                    ladder_orders.append({
-                        "level": lvl,
-                        "price": lvl_price,
-                        "amount": lvl_amount,
-                        "shares": lvl_shares,
-                        "status": "pending",
-                    })
+                    ladder_orders.append(
+                        {
+                            "level": lvl,
+                            "price": lvl_price,
+                            "amount": lvl_amount,
+                            "shares": lvl_shares,
+                            "status": "pending",
+                        }
+                    )
             bet.ladder_data = json.dumps(ladder_orders) if ladder_orders else "[]"
 
             # Live vs Paper execution logic
@@ -286,21 +279,22 @@ class BetPlacer:
                         BUY,  # pylint: disable=import-error,no-name-in-module
                     )
 
-                    order = self.client.create_and_post_order({
-                        "token_id": self._get_token_id(market, analysis.recommended_side),
-                        "price": bet.price,
-                        "size": bet.amount / bet.price,
-                        "side": BUY,
-                    })
+                    order = self.client.create_and_post_order(
+                        {
+                            "token_id": self._get_token_id(market, analysis.recommended_side),
+                            "price": bet.price,
+                            "size": bet.amount / bet.price,
+                            "side": BUY,
+                        }
+                    )
 
                     bet.order_id = order.get("orderID")
                     bet.status = "placed"
-                    bet.placed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    bet.placed_at = datetime.now(UTC).replace(tzinfo=None)
 
                     market.status = "bet_placed"
                     logger.info(
-                        f"LIVE BET OPENED: {market.id} | "
-                        f"{analysis.recommended_side} ${bet.amount:.2f} @ {bet.price}"
+                        f"LIVE BET OPENED: {market.id} | {analysis.recommended_side} ${bet.amount:.2f} @ {bet.price}"
                     )
                 except Exception as e:
                     bet.status = "failed"
@@ -309,10 +303,10 @@ class BetPlacer:
             else:
                 # Simulated / Paper trade fallback. Also covers the case
                 # where Config.DRY_RUN is true (defense-in-depth).
-                now_ts = int(datetime.now(timezone.utc).replace(tzinfo=None).timestamp())
+                now_ts = int(datetime.now(UTC).replace(tzinfo=None).timestamp())
                 bet.order_id = f"paper_order_{market.id}_{now_ts}"
                 bet.status = "placed"
-                bet.placed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                bet.placed_at = datetime.now(UTC).replace(tzinfo=None)
                 market.status = "bet_placed"
                 logger.info(
                     f"PAPER BET OPENED: {market.id} | "
@@ -331,7 +325,7 @@ class BetPlacer:
                     initial_stake = l1_amount
                     # Mark L1 as filled immediately (prevents double-debit in run_update_prices)
                     ladder_orders[0]["status"] = "filled"
-                    ladder_orders[0]["filled_at"] = datetime.now(timezone.utc).isoformat()
+                    ladder_orders[0]["filled_at"] = datetime.now(UTC).isoformat()
                     # Persist updated ladder back to bet.ladder_data
                     bet.ladder_data = json.dumps(ladder_orders)
             try:
@@ -346,7 +340,7 @@ class BetPlacer:
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
             if portfolio:
                 portfolio.current_value = portfolio.cash_balance  # unrealized PnL added later (Faz 4)
-                portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
+                portfolio.last_updated = datetime.now(UTC).replace(tzinfo=None)
             session.add(bet)
             session.commit()
             return bet
@@ -364,19 +358,13 @@ class BetPlacer:
         """should_bet=True olan tüm analizler için bet aç."""
         placed = 0
         with get_session() as session:
-            pending = session.query(Analysis).filter(
-                Analysis.should_bet.is_(True)
-            ).all()
+            pending = session.query(Analysis).filter(Analysis.should_bet.is_(True)).all()
             analysis_ids = [a.id for a in pending]
 
             # Dedup: skip analysis_ids that already have ANY Bet record
             processed = set()
             if analysis_ids:
-                existing_rows = (
-                    session.query(Bet.analysis_id)
-                    .filter(Bet.analysis_id.in_(analysis_ids))
-                    .all()
-                )
+                existing_rows = session.query(Bet.analysis_id).filter(Bet.analysis_id.in_(analysis_ids)).all()
                 processed = {row[0] for row in existing_rows if row[0] is not None}
 
         for aid in analysis_ids:

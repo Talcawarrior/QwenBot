@@ -1,4 +1,5 @@
 """Test the new TTL cache behavior in scrapers/meteo."""
+
 import time
 
 from scrapers.meteo import _cache_clear, _cache_get, _cache_set
@@ -20,6 +21,7 @@ def test_cache_miss_returns_none():
 def test_cache_failure_ttl_expires():
     """A cached None must expire after _FAILURE_TTL_S, not be remembered forever."""
     from scrapers.meteo import _FAILURE_TTL_S
+
     if _FAILURE_TTL_S > 5.0:
         # TTL is too long for a test - just sanity check the structure
         _cache_clear()
@@ -29,6 +31,7 @@ def test_cache_failure_ttl_expires():
     else:
         # Real TTL test: override the TTL to a tiny value, then verify expiry
         from scrapers import meteo
+
         original = meteo._FAILURE_TTL_S
         meteo._FAILURE_TTL_S = 0.05  # 50ms
         try:
@@ -43,6 +46,7 @@ def test_cache_failure_ttl_expires():
 
 def test_cache_success_ttl_expires():
     from scrapers import meteo
+
     original = meteo._SUCCESS_TTL_S
     meteo._SUCCESS_TTL_S = 0.05
     try:

@@ -1,4 +1,5 @@
-﻿"""Tests for the auto-restart-after-reset UX fix."""
+"""Tests for the auto-restart-after-reset UX fix."""
+
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -20,10 +21,10 @@ def client():
 
 def test_reset_clears_state_without_auto_restart(client):
     """POST /api/reset clears bets/portfolio but does NOT auto-start."""
-    with patch('main.start_bot', new=AsyncMock(return_value={'status': 'started'})) as mock_start:
-        r = client.post('/api/reset')
+    with patch("main.start_bot", new=AsyncMock(return_value={"status": "started"})) as mock_start:
+        r = client.post("/api/reset")
         assert r.status_code == 200
         body = r.json()
-        assert body['status'] == 'reset'
+        assert body["status"] == "reset"
         # Reset does NOT auto-start (manual start required)
         assert not mock_start.called

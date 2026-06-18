@@ -30,12 +30,8 @@ import threading
 logger = logging.getLogger(__name__)
 
 # Project root: two parents up from utils/ -> repo root.
-_WEIGHTS_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), os.pardir, "data", "model_weights.json")
-)
-_STRATEGY_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), os.pardir, "data", "strategy_params.json")
-)
+_WEIGHTS_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data", "model_weights.json"))
+_STRATEGY_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data", "strategy_params.json"))
 
 _lock = threading.Lock()
 
@@ -122,9 +118,7 @@ def save_weights(
             # Compare union of keys so a newly-tracked model still triggers
             # a write on its first appearance.
             keys = set(prev) | set(norm)
-            max_delta = max(
-                abs(norm.get(k, 0.0) - prev.get(k, 0.0)) for k in keys
-            )
+            max_delta = max(abs(norm.get(k, 0.0) - prev.get(k, 0.0)) for k in keys)
             if max_delta < min_change:
                 logger.info(
                     "SIA weight change %.4f below threshold %.4f, skipping write",

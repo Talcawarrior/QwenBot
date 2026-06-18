@@ -1,7 +1,6 @@
 """Price validation helpers for binary Polymarket markets."""
 
 
-
 def is_valid_binary_price(yes_price: float, no_price: float) -> bool:
     """
     Validate binary market prices.
@@ -71,7 +70,6 @@ def validate_market_prices(market) -> tuple[bool, str]:
         return False, "no_price is None"
     if not is_valid_binary_price(market.yes_price, market.no_price):
         return False, (
-            f"invalid prices: yes={market.yes_price}, no={market.no_price}, "
-            f"sum={market.yes_price + market.no_price}"
+            f"invalid prices: yes={market.yes_price}, no={market.no_price}, sum={market.yes_price + market.no_price}"
         )
     return True, ""

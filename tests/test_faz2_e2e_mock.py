@@ -11,7 +11,7 @@ Tests the full pipeline:
 
 import os
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 # Point to a temporary DB path so we get fresh tables with all columns
 _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
@@ -55,7 +55,7 @@ def test_analysis_via_metric_map():
             session.commit()
 
         # Create a target date 2 days in the future
-        target_date = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=2)
+        target_date = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=2)
         target_date = target_date.replace(hour=23, minute=59, second=59)
 
         # Step 1: Create market with metric="temperature_max" (Faz 1 format)
@@ -101,7 +101,7 @@ def test_analysis_via_metric_map():
                 source=src,
                 predicted_value=val,
                 model_weight=wgt,
-                fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                fetched_at=datetime.now(UTC).replace(tzinfo=None),
             )
             session.add(wf)
         session.commit()
@@ -122,9 +122,7 @@ def test_analysis_via_metric_map():
         assert analysis_instance is not None, "❌ Analysis is NULL! METRIC_MAP not working."
 
         # Re-query from DB to avoid DetachedInstanceError
-        analysis = session.query(Analysis).filter(
-            Analysis.market_id == "test-e2e-001"
-        ).first()
+        analysis = session.query(Analysis).filter(Analysis.market_id == "test-e2e-001").first()
 
         assert analysis is not None, "❌ Analysis not found in DB!"
         print(f"  Analysis created: id={analysis.id}")
@@ -140,9 +138,7 @@ def test_analysis_via_metric_map():
             f"❌ Expected {len(forecasts_data)} sources, got {analysis.num_sources}"
         )
         assert analysis.edge > 0, "❌ edge should be positive (forecasts > threshold 30C)"
-        assert analysis.should_bet is True, (
-            f"❌ should_bet={analysis.should_bet} — METRIC_MAP may not be working"
-        )
+        assert analysis.should_bet is True, f"❌ should_bet={analysis.should_bet} — METRIC_MAP may not be working"
         assert analysis.recommended_amount > 0, "❌ recommended_amount is 0!"
 
         print("\n  ✅ TEST 1 PASSED: METRIC_MAP works correctly")
@@ -158,9 +154,7 @@ def test_analysis_via_metric_map():
         assert bet_instance is not None, "❌ Bet could not be placed!"
 
         # Re-query from DB to avoid DetachedInstanceError
-        bet = session.query(Bet).filter(
-            Bet.analysis_id == analysis.id
-        ).first()
+        bet = session.query(Bet).filter(Bet.analysis_id == analysis.id).first()
 
         assert bet is not None, "❌ Bet not found in DB!"
         print(f"\n  Bet created: id={bet.id}")
@@ -184,6 +178,7 @@ def test_metric_map_in_main():
 def test_betplacer_status_consistency():
     """Verify BetPlacer._OPEN_STATUSES includes 'placed' and 'pending'."""
     from executor.bet_placer import BetPlacer
+
     bp = BetPlacer()
     assert "placed" in bp._OPEN_STATUSES, "❌ 'placed' missing from _OPEN_STATUSES"
     assert "pending" in bp._OPEN_STATUSES, "❌ 'pending' missing from _OPEN_STATUSES"
@@ -195,13 +190,10 @@ def test_scheduler_uses_calculator():
     import inspect
 
     import jobs.scheduler as scheduler
+
     src = inspect.getsource(scheduler.run_analyze)
-    assert "from engine.calculator import Calculator" in src, (
-        "❌ scheduler.run_analyze does not import Calculator!"
-    )
-    assert "calc.analyze_market" in src, (
-        "❌ scheduler.run_analyze does not call Calculator.analyze_market!"
-    )
+    assert "from engine.calculator import Calculator" in src, "❌ scheduler.run_analyze does not import Calculator!"
+    assert "calc.analyze_market" in src, "❌ scheduler.run_analyze does not call Calculator.analyze_market!"
     print("✅ TEST 4 PASSED: scheduler.run_analyze uses Calculator.analyze_market()")
 
 

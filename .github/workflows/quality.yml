@@ -1,0 +1,50 @@
+name: Quality & Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff mypy bandit types-all pydantic sqlalchemy pytest-cov safety
+
+      - name: Ruff Lint
+        run: ruff check . --output-format=github
+
+      - name: Ruff Format Check
+        run: ruff format --check .
+
+      - name: Mypy
+        run: mypy config/ engine/ executor/ scrapers/ utils/ database/ jobs/ --ignore-missing-imports
+
+      - name: Bandit Security
+        run: bandit -r config/ engine/ executor/ scrapers/ utils/ database/ jobs/ --severity-level=high -q
+
+      - name: Pytest + Coverage
+        run: |
+          pytest --cov --cov-report=xml --cov-report=term-missing -q
+        env:
+          DRY_RUN: "true"
+          PYTHONPATH: "."
+
+      - name: Safety (Dependencies)
+        run: safety check --full-report || true
+        continue-on-error: true

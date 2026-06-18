@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 def test_fetch_markets():
     """Step 1: Fetch markets from Polymarket, verify count > 0."""
     from scrapers.polymarket import PolymarketScraper
+
     scraper = PolymarketScraper()
     count = scraper.fetch_and_save()
     print(f"[FETCH] Raw markets fetched: {count}")
@@ -27,12 +28,11 @@ def test_weather_filtered():
     """Step 2: Verify weather-filtered markets exist in DB."""
     from database.db import get_db_session, init_db
     from database.models import WeatherMarket
+
     init_db()
     with get_db_session() as session:
         total = session.query(WeatherMarket).count()
-        weather = session.query(WeatherMarket).filter(
-            WeatherMarket.city.isnot(None)
-        ).count()
+        weather = session.query(WeatherMarket).filter(WeatherMarket.city.isnot(None)).count()
     print(f"[WEATHER] Total markets in DB: {total}, with city parsed: {weather}")
     assert weather > 0, f"Expected > 0 weather-filtered markets, got {weather}"
     return weather
@@ -41,19 +41,25 @@ def test_weather_filtered():
 def test_parse_markets():
     """Step 3: Parse markets, verify at least 1 has city/date/threshold/metric."""
     from engine.market_parser import MarketParser
+
     parser = MarketParser()
     parsed = parser.parse_all_unparsed()
     print(f"[PARSE] Newly parsed: {parsed}")
 
     from database.db import get_db_session
     from database.models import WeatherMarket
+
     with get_db_session() as session:
-        valid = session.query(WeatherMarket).filter(
-            WeatherMarket.city.isnot(None),
-            WeatherMarket.target_date.isnot(None),
-            WeatherMarket.threshold.isnot(None),
-            WeatherMarket.metric.isnot(None),
-        ).count()
+        valid = (
+            session.query(WeatherMarket)
+            .filter(
+                WeatherMarket.city.isnot(None),
+                WeatherMarket.target_date.isnot(None),
+                WeatherMarket.threshold.isnot(None),
+                WeatherMarket.metric.isnot(None),
+            )
+            .count()
+        )
     print(f"[PARSE] Markets with city+date+threshold+metric: {valid}")
     assert valid > 0, f"Expected >= 1 fully parsed market, got {valid}"
     return valid
@@ -62,6 +68,7 @@ def test_parse_markets():
 def test_fetch_weather():
     """Step 4: Fetch weather forecasts for parsed markets."""
     from scrapers.meteo import MeteoFetcher
+
     fetcher = MeteoFetcher()
     count = fetcher.fetch_all_markets()
     print(f"[WEATHER] Forecasts fetched: {count}")
@@ -71,14 +78,21 @@ def test_fetch_weather():
 def test_analyze():
     """Step 5: Run analysis, check at least 1 analysis produced."""
     from engine.calculator import Calculator
+
     calc = Calculator()
     from database.db import get_db_session
     from database.models import WeatherMarket
+
     with get_db_session() as session:
-        markets = session.query(WeatherMarket).filter(
-            WeatherMarket.status == "open",
-            WeatherMarket.city.isnot(None),
-        ).limit(5).all()
+        markets = (
+            session.query(WeatherMarket)
+            .filter(
+                WeatherMarket.status == "open",
+                WeatherMarket.city.isnot(None),
+            )
+            .limit(5)
+            .all()
+        )
         market_ids = [m.id for m in markets]
     analyzed = 0
     for mid in market_ids:

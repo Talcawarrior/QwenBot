@@ -3,9 +3,11 @@
 
 # ── OPEN_BET_STATUSES ──────────────────────────────────────────────────────
 
+
 def test_open_bet_statuses_defined():
     """OPEN_BET_STATUSES is a tuple with the expected values."""
     from database.models import OPEN_BET_STATUSES
+
     assert isinstance(OPEN_BET_STATUSES, tuple)
     assert "active" in OPEN_BET_STATUSES
     assert "open" in OPEN_BET_STATUSES
@@ -49,12 +51,12 @@ def test_no_literal_open_status_tuples():
                 violations.append(rel)
 
     assert not violations, (
-        f"Literal open-status tuples found in: {violations}. "
-        "Replace with OPEN_BET_STATUSES from database.models."
+        f"Literal open-status tuples found in: {violations}. Replace with OPEN_BET_STATUSES from database.models."
     )
 
 
 # ── No mojibake ────────────────────────────────────────────────────────────
+
 
 def test_no_mojibake_in_python_files():
     """No Python file contains broken UTF-8 byte sequences (mojibake)."""

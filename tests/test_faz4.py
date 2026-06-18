@@ -59,14 +59,13 @@ def _setup():
         )
         session.add(market)
 
-        ladder_data = json.dumps([
-            {"level": 1, "price": 0.35, "size": 5.0, "amount": 5.0,
-             "shares": 14.29, "status": "filled"},
-            {"level": 2, "price": 0.343, "size": 3.0, "amount": 3.0,
-             "shares": 8.75, "status": "pending"},
-            {"level": 3, "price": 0.3325, "size": 2.0, "amount": 2.0,
-             "shares": 6.02, "status": "pending"},
-        ])
+        ladder_data = json.dumps(
+            [
+                {"level": 1, "price": 0.35, "size": 5.0, "amount": 5.0, "shares": 14.29, "status": "filled"},
+                {"level": 2, "price": 0.343, "size": 3.0, "amount": 3.0, "shares": 8.75, "status": "pending"},
+                {"level": 3, "price": 0.3325, "size": 2.0, "amount": 2.0, "shares": 6.02, "status": "pending"},
+            ]
+        )
         bet = Bet(
             market_id="test-faz4-ladder",
             side="YES",
@@ -134,34 +133,24 @@ def test_ladder_price_drops_trigger_fill():
             assert bet.current_price == 0.34, f"Expected 0.34, got {bet.current_price}"
             # Unrealized PnL: 28.57 * (0.34 - 0.35) = -0.2857 ~ -0.29
             assert bet.unrealized_pnl is not None
-            assert bet.unrealized_pnl < 0, (
-                f"Expected negative PnL, got {bet.unrealized_pnl}"
-            )
+            assert bet.unrealized_pnl < 0, f"Expected negative PnL, got {bet.unrealized_pnl}"
 
             # Ladder: level 2 should be filled (trigger 0.343 >= current 0.34)
             ladder = json.loads(bet.ladder_data)
-            assert ladder[1]["status"] == "filled", (
-                f"Level 2 not filled: {ladder[1]}"
-            )
-            assert ladder[2]["status"] == "pending", (
-                f"Level 3 should still be pending: {ladder[2]}"
-            )
+            assert ladder[1]["status"] == "filled", f"Level 2 not filled: {ladder[1]}"
+            assert ladder[2]["status"] == "pending", f"Level 3 should still be pending: {ladder[2]}"
             assert "filled_at" in ladder[1], "Level 2 missing filled_at"
 
             # Level 2 amount 3.0 deducted from cash (990 - 3 = 987)
             pf = session.query(Portfolio).filter(Portfolio.id == 1).first()
             assert pf is not None
-            assert pf.cash_balance == 987.0, (
-                f"Expected 987.0, got {pf.cash_balance}"
-            )
+            assert pf.cash_balance == 987.0, f"Expected 987.0, got {pf.cash_balance}"
 
             # total_value = cash + open_exposure + unrealized
             # cash=987, exposure=10(YES)+20(NO)=30, unrealized~-0.29
             # total = 987 + 30 + (-0.29) = 1016.71
             assert pf.total_value is not None
-            assert abs(pf.total_value - 1016.71) < 0.5, (
-                f"total_value={pf.total_value}, expected ~1016.71"
-            )
+            assert abs(pf.total_value - 1016.71) < 0.5, f"total_value={pf.total_value}, expected ~1016.71"
     finally:
         _clean()
 
@@ -172,29 +161,22 @@ def test_no_side_unrealized_pnl():
     try:
         # Update market price: yes_price=0.65 -> NO price=0.35
         with get_session() as session:
-            m = session.query(WeatherMarket).filter(
-                WeatherMarket.id == "test-faz4-no"
-            ).first()
+            m = session.query(WeatherMarket).filter(WeatherMarket.id == "test-faz4-no").first()
             m.yes_price = 0.75  # NO price = 0.25
             session.commit()
 
         from jobs.scheduler import run_update_prices
+
         run_update_prices()
 
         with get_session() as session:
-            bet = session.query(Bet).filter(
-                Bet.market_id == "test-faz4-no"
-            ).first()
+            bet = session.query(Bet).filter(Bet.market_id == "test-faz4-no").first()
             assert bet is not None
             # NO price = 1 - 0.75 = 0.25
-            assert bet.current_price == 0.25, (
-                f"Expected 0.25, got {bet.current_price}"
-            )
+            assert bet.current_price == 0.25, f"Expected 0.25, got {bet.current_price}"
             # PnL = 57.14 * ((1-0.25) - (1-0.35)) = 57.14 * (-0.10) = -5.71
             assert bet.unrealized_pnl is not None
-            assert bet.unrealized_pnl < 0, (
-                f"Expected negative PnL for NO, got {bet.unrealized_pnl}"
-            )
+            assert bet.unrealized_pnl < 0, f"Expected negative PnL for NO, got {bet.unrealized_pnl}"
     finally:
         _clean()
 
@@ -204,32 +186,23 @@ def test_ladder_no_price_change_no_fill():
     _setup()
     try:
         with get_session() as session:
-            m = session.query(WeatherMarket).filter(
-                WeatherMarket.id == "test-faz4-ladder"
-            ).first()
+            m = session.query(WeatherMarket).filter(WeatherMarket.id == "test-faz4-ladder").first()
             m.yes_price = 0.35  # Same as entry
             session.commit()
 
         from jobs.scheduler import run_update_prices
+
         run_update_prices()
 
         with get_session() as session:
-            bet = session.query(Bet).filter(
-                Bet.market_id == "test-faz4-ladder"
-            ).first()
+            bet = session.query(Bet).filter(Bet.market_id == "test-faz4-ladder").first()
             ladder = json.loads(bet.ladder_data)
-            assert ladder[1]["status"] == "pending", (
-                f"Level 2 should be pending: {ladder[1]}"
-            )
-            assert ladder[2]["status"] == "pending", (
-                f"Level 3 should be pending: {ladder[2]}"
-            )
+            assert ladder[1]["status"] == "pending", f"Level 2 should be pending: {ladder[1]}"
+            assert ladder[2]["status"] == "pending", f"Level 3 should be pending: {ladder[2]}"
             # Cash unchanged
             pf = session.query(Portfolio).filter(Portfolio.id == 1).first()
             assert pf is not None
-            assert pf.cash_balance == 990.0, (
-                f"Expected 990.0, got {pf.cash_balance}"
-            )
+            assert pf.cash_balance == 990.0, f"Expected 990.0, got {pf.cash_balance}"
     finally:
         _clean()
 
@@ -243,6 +216,7 @@ def test_no_open_bets():
             session.commit()
 
         from jobs.scheduler import run_update_prices
+
         result = run_update_prices()
         # Should not crash
         assert result is not None
@@ -252,4 +226,5 @@ def test_no_open_bets():
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__, "-v"])

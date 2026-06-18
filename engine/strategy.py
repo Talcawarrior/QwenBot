@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func
 
@@ -48,7 +48,7 @@ class MockBet:
         self.unrealized_pnl = 0.0
         self.realized_pnl = 0.0
         self.status = "active"
-        self.placed_at = datetime.now(timezone.utc)
+        self.placed_at = datetime.now(UTC)
 
 
 class RiskManager:
@@ -72,6 +72,7 @@ class RiskManager:
             return
         try:
             from database.models import Portfolio
+
             p = self.db.query(Portfolio).filter(Portfolio.id == 1).first()
             if p and p.total_value:
                 self.portfolio_value = float(p.total_value)
@@ -132,9 +133,11 @@ class RiskManager:
         if (current_exposure + additional_bet) > max_exposure:
             logger.warning(
                 "Exposure cap: $%.2f + $%.2f = $%.2f > $%.2f (25%% of $%.2f conservative)",
-                current_exposure, additional_bet,
+                current_exposure,
+                additional_bet,
                 current_exposure + additional_bet,
-                max_exposure, conservative_value,
+                max_exposure,
+                conservative_value,
             )
             return False
         return True
@@ -147,11 +150,13 @@ class RiskManager:
             from sqlalchemy import func
 
             from database.models import Bet
+
             initial = self.config.INITIAL_PORTFOLIO
             realized = float(
                 self.db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
                 .filter(Bet.status.in_(("won", "lost", "settled")))
-                .scalar() or 0.0
+                .scalar()
+                or 0.0
             )
             return initial + realized
         except Exception:
@@ -196,11 +201,7 @@ class RiskManager:
         try:
             portfolio = self.db.query(Portfolio).filter(Portfolio.id == 1).first()
             if portfolio:
-                self.portfolio_value = (
-                    portfolio.current_value
-                    or portfolio.initial_value
-                    or self.portfolio_value
-                )
+                self.portfolio_value = portfolio.current_value or portfolio.initial_value or self.portfolio_value
                 self.daily_pnl = portfolio.daily_pnl or 0.0
 
             active = self.db.query(Bet).filter(Bet.status.in_(["active", "open"])).all()
@@ -224,9 +225,11 @@ class RiskManager:
         """Return risk config with fallback defaults."""
         try:
             from config.settings import bot_config
+
             return bot_config.risk
         except Exception:
             from config.settings import RiskConfig
+
             return RiskConfig()
 
     def check_stop_loss(self, bet, current_price: float, market=None) -> tuple:  # pylint: disable=unused-argument
@@ -260,7 +263,7 @@ class RiskManager:
     def check_time_decay(self, bet, current_price: float, market) -> tuple:
         """Time decay: settlement'a <time_decay_hours kala ve zarardaysa kapat."""
         cfg = self._get_risk_config()
-        if not market or not hasattr(market, 'resolution_date'):
+        if not market or not hasattr(market, "resolution_date"):
             return False, ""
         try:
             resolution = market.resolution_date
@@ -268,8 +271,8 @@ class RiskManager:
                 return False, ""
             # Naive datetime'leri timezone-aware yap
             if resolution.tzinfo is None:
-                resolution = resolution.replace(tzinfo=timezone.utc)
-            now = datetime.now(timezone.utc)
+                resolution = resolution.replace(tzinfo=UTC)
+            now = datetime.now(UTC)
             hours_left = (resolution - now).total_seconds() / 3600
             if hours_left <= 0:
                 return False, ""  # Zaten geçmiş, settlement halleder
@@ -359,13 +362,13 @@ class RiskManager:
         Returns: Kapatılacak Bet nesnesi veya None
         """
         cfg = self._get_risk_config()
-        new_edge = getattr(new_signal, 'edge', 0.0) or (isinstance(new_signal, dict) and new_signal.get('edge', 0.0))
+        new_edge = getattr(new_signal, "edge", 0.0) or (isinstance(new_signal, dict) and new_signal.get("edge", 0.0))
 
         for bet in active_bets:
             # Bet edge'ini fair_value - entry_price'dan hesapla
-            bet_edge = float(getattr(bet, 'expected_value', 0) or 0)
-            bet_pnl = float(getattr(bet, 'unrealized_pnl', 0) or 0)
-            bet_stake = float(getattr(bet, 'stake', bet.amount or 1))
+            bet_edge = float(getattr(bet, "expected_value", 0) or 0)
+            bet_pnl = float(getattr(bet, "unrealized_pnl", 0) or 0)
+            bet_stake = float(getattr(bet, "stake", bet.amount or 1))
             bet_return_pct = bet_pnl / bet_stake if bet_stake > 0 else 0
 
             # Yeni edge eski edge'in min_rebalance_edge_ratio katı mı?
@@ -385,15 +388,15 @@ class RiskManager:
             return False, ""
         try:
             # Bet'in açıldığı andaki model prob'u fair_value'da saklı
-            entry_prob = float(getattr(bet, 'fair_value', 0.5) or 0.5)
-            current_prob = float(getattr(analysis, 'estimated_prob', 0.5) or 0.5)
+            entry_prob = float(getattr(bet, "fair_value", 0.5) or 0.5)
+            current_prob = float(getattr(analysis, "estimated_prob", 0.5) or 0.5)
 
             if entry_prob <= 0 or current_prob <= 0:
                 return False, ""
 
             prob_change = current_prob - entry_prob
-            bet_pnl = float(getattr(bet, 'unrealized_pnl', 0) or 0)
-            bet_stake = float(getattr(bet, 'stake', bet.amount or 1))
+            bet_pnl = float(getattr(bet, "unrealized_pnl", 0) or 0)
+            bet_stake = float(getattr(bet, "stake", bet.amount or 1))
             return_pct = bet_pnl / bet_stake if bet_stake > 0 else 0
 
             # Model prob'u %20+ ters yönde değiştiyse ve zarardaysak çık
@@ -418,11 +421,12 @@ class RiskManager:
         4. Exposure cap (%25)
         5. City cap kontrolü
         """
-        model_prob = getattr(signal, 'probability',
-                     getattr(signal, 'model_prob',
-                     (signal.get('model_prob') if isinstance(signal, dict) else 0.5)))
-        market_price = getattr(signal, 'entry_price',
-                       (signal.get('entry_price') if isinstance(signal, dict) else 0.5))
+        model_prob = getattr(
+            signal,
+            "probability",
+            getattr(signal, "model_prob", (signal.get("model_prob") if isinstance(signal, dict) else 0.5)),
+        )
+        market_price = getattr(signal, "entry_price", (signal.get("entry_price") if isinstance(signal, dict) else 0.5))
 
         if model_prob is None or model_prob <= 0 or market_price is None or market_price <= 0:
             return 0.0
@@ -523,9 +527,7 @@ class BettingEngine:
     def calculate_position_size(self, signal: dict, portfolio_value: float, risk_manager) -> float:
         """Calculate position size using fractional Kelly and exposure caps."""
         market_price = signal["market_price"]
-        kelly_size = risk_manager.calculate_kelly_bet_size(
-            signal.get("model_prob", 0.5), market_price
-        )
+        kelly_size = risk_manager.calculate_kelly_bet_size(signal.get("model_prob", 0.5), market_price)
 
         current_exposure = 0.0
         if risk_manager and hasattr(risk_manager, "get_total_exposure"):
@@ -553,14 +555,13 @@ class BettingEngine:
             city_code = getattr(market_data, "city_code", "")
             strike_temp = getattr(market_data, "strike_temp", 25.0)
             market_type = getattr(market_data, "market_type", "HIGH")
-            yes_price = getattr(market_data, "yes_price", 0.5) or getattr(
-                market_data, "current_yes_bid", 0.5
-            )
+            yes_price = getattr(market_data, "yes_price", 0.5) or getattr(market_data, "current_yes_bid", 0.5)
 
         model_prob = 0.55
         side = "YES"
         if forecast:
             from utils.probability import estimate_probability as _ep
+
             try:
                 mean = forecast.get("weighted_mean", 0) if isinstance(forecast, dict) else 0
                 std = forecast.get("weighted_std", 0) if isinstance(forecast, dict) else 0
@@ -594,9 +595,7 @@ class BettingEngine:
         bet_size = 10.0
         if self.risk_manager and hasattr(self.risk_manager, "calculate_position_size"):
             try:
-                bet_size = self.calculate_position_size(
-                    signal_dict, portfolio_value, self.risk_manager
-                )
+                bet_size = self.calculate_position_size(signal_dict, portfolio_value, self.risk_manager)
             except Exception:
                 bet_size = 10.0
         signal_dict["bet_size"] = bet_size
@@ -634,13 +633,9 @@ class BettingEngine:
                 city_code = market_data.get("city_code", "")
                 yes_price = market_data.get("yes_price", 0.5)
             else:
-                market_id = getattr(
-                    market_data, "market_id", getattr(market_data, "event_id", "")
-                )
+                market_id = getattr(market_data, "market_id", getattr(market_data, "event_id", ""))
                 city_code = getattr(market_data, "city_code", "")
-                yes_price = getattr(market_data, "yes_price", 0.5) or getattr(
-                    market_data, "current_yes_bid", 0.5
-                )
+                yes_price = getattr(market_data, "yes_price", 0.5) or getattr(market_data, "current_yes_bid", 0.5)
 
             bet = Bet(
                 market_id=str(market_id),
@@ -664,7 +659,7 @@ class BettingEngine:
                 bet_type=getattr(signal, "outcome", "YES"),
                 side=getattr(signal, "side", "YES"),
                 status="active",
-                placed_at=datetime.now(timezone.utc),
+                placed_at=datetime.now(UTC),
                 ladder_data=json.dumps(getattr(signal, "ladder_orders", []))
                 if hasattr(signal, "ladder_orders")
                 else None,
@@ -725,10 +720,7 @@ class SIALoop:
         if len(predictions) != len(outcomes) or len(predictions) == 0:
             return 1.0
 
-        squared_errors = [
-            (pred - (1.0 if outcome else 0.0)) ** 2
-            for pred, outcome in zip(predictions, outcomes)
-        ]
+        squared_errors = [(pred - (1.0 if outcome else 0.0)) ** 2 for pred, outcome in zip(predictions, outcomes)]
         brier_score = sum(squared_errors) / len(squared_errors)
         return round(brier_score, 4)
 
@@ -758,7 +750,7 @@ class SIALoop:
 
         db = self.db_session_factory()
         try:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff = datetime.now(UTC) - timedelta(days=days)
 
             # ── Load settled bets with their analysis + market resolution ──
             settled_bets = (
@@ -823,11 +815,7 @@ class SIALoop:
                 outcomes_bool = [r[1] for r in records]
 
                 brier_score = self.calculate_brier_score(predictions, outcomes_bool)
-                correct = sum(
-                    1
-                    for pred, out in zip(predictions, outcomes_bool)
-                    if (pred >= 0.5) == out
-                )
+                correct = sum(1 for pred, out in zip(predictions, outcomes_bool) if (pred >= 0.5) == out)
                 num_pred = len(predictions)
                 accuracy = correct / num_pred if num_pred else 0
                 frozen = num_pred < 10
@@ -835,16 +823,15 @@ class SIALoop:
                 if frozen:
                     logger.info(
                         "SIA: %s has only %d predictions (< 10) — weight frozen",
-                        model_name, num_pred,
+                        model_name,
+                        num_pred,
                     )
 
                 performance[model_name] = {
                     "brier_score": brier_score,
                     "accuracy": round(accuracy, 4),
                     "num_predictions": num_pred,
-                    "avg_confidence": round(sum(predictions) / num_pred, 4)
-                    if num_pred
-                    else 0,
+                    "avg_confidence": round(sum(predictions) / num_pred, 4) if num_pred else 0,
                     "frozen": frozen,
                 }
 
@@ -889,31 +876,20 @@ class SIALoop:
 
         # Separate frozen vs optimizable models
         frozen_models = {
-            m: self.model_weights.get(m, 0.0)
-            for m, d in performance_data.items()
-            if d.get("frozen", False)
+            m: self.model_weights.get(m, 0.0) for m, d in performance_data.items() if d.get("frozen", False)
         }
-        optimizable = {
-            m: d
-            for m, d in performance_data.items()
-            if not d.get("frozen", False)
-        }
+        optimizable = {m: d for m, d in performance_data.items() if not d.get("frozen", False)}
 
         if optimizable:
             frozen_total = sum(frozen_models.values())
             remaining_budget = 1.0 - frozen_total
 
-            inverse_scores = {
-                model: max(0.01, 1.0 - data["brier_score"])
-                for model, data in optimizable.items()
-            }
+            inverse_scores = {model: max(0.01, 1.0 - data["brier_score"]) for model, data in optimizable.items()}
             total_inv = sum(inverse_scores.values())
 
             if total_inv > 0:
                 for model, score in inverse_scores.items():
-                    new_weights[model] = round(
-                        score / total_inv * remaining_budget, 4
-                    )
+                    new_weights[model] = round(score / total_inv * remaining_budget, 4)
             else:
                 # All inverse scores collapsed; distribute remaining budget equally
                 n_opt = len(optimizable) if optimizable else 1
@@ -971,7 +947,8 @@ class SIALoop:
             strategy.min_edge = min(0.15, strategy.min_edge + 0.01)
             logger.info(
                 "  min_edge: %.2f -> %.2f (Selectivity INCREASED due to low Win Rate)",
-                old_edge, strategy.min_edge,
+                old_edge,
+                strategy.min_edge,
             )
         elif win_rate > 0.60 and total_roi > 5:
             # High win rate & profit: relax filter to find more trades
@@ -979,7 +956,8 @@ class SIALoop:
             strategy.min_edge = max(0.01, strategy.min_edge - 0.005)
             logger.info(
                 "  min_edge: %.2f -> %.2f (Selectivity RELAXED due to high performance)",
-                old_edge, strategy.min_edge,
+                old_edge,
+                strategy.min_edge,
             )
 
         # 2. Risk Appetite (kelly_fraction)
@@ -989,7 +967,8 @@ class SIALoop:
             strategy.kelly_fraction = max(0.05, strategy.kelly_fraction - 0.05)
             logger.info(
                 "  kelly_fraction: %.2f -> %.2f (Risk REDUCED due to drawdown)",
-                old_kelly, strategy.kelly_fraction,
+                old_kelly,
+                strategy.kelly_fraction,
             )
         elif total_roi > 10 and win_rate > 0.55:
             # High growth: slightly increase risk (capped at 0.25)
@@ -997,14 +976,12 @@ class SIALoop:
             strategy.kelly_fraction = min(0.25, strategy.kelly_fraction + 0.02)
             logger.info(
                 "  kelly_fraction: %.2f -> %.2f (Risk INCREASED due to strong growth)",
-                old_kelly, strategy.kelly_fraction,
+                old_kelly,
+                strategy.kelly_fraction,
             )
 
         # Persist changes
-        save_strategy_params({
-            "min_edge": strategy.min_edge,
-            "kelly_fraction": strategy.kelly_fraction
-        })
+        save_strategy_params({"min_edge": strategy.min_edge, "kelly_fraction": strategy.kelly_fraction})
 
     def run_optimization_cycle(self) -> bool:
         """Execute full SIA optimization cycle (Models + Strategy)."""
@@ -1022,7 +999,7 @@ class SIALoop:
                 new_weights = self.optimize_weights(performance)
                 self.model_weights = new_weights
                 if hasattr(self.config, "MODEL_WEIGHTS"):
-                    setattr(self.config, "MODEL_WEIGHTS", new_weights)
+                    self.config.MODEL_WEIGHTS = new_weights
 
             # --- 2. Strategy Parameter Optimization (Financial SIA) ---
             # Aggregate overall stats for the feedback agent
@@ -1035,11 +1012,7 @@ class SIALoop:
             current_val = getattr(portfolio, "total_value", 1000.0)
             roi = ((current_val - initial) / initial) * 100 if initial > 0 else 0
 
-            summary = {
-                "win_rate": win_count / total if total > 0 else 0.5,
-                "total_roi": roi,
-                "total_bets": total
-            }
+            summary = {"win_rate": win_count / total if total > 0 else 0.5, "total_roi": roi, "total_bets": total}
             self.optimize_strategy_params(summary)
 
             # --- 3. Persist and Record ---
@@ -1050,7 +1023,7 @@ class SIALoop:
                     accuracy=perf["accuracy"],
                     num_predictions=perf["num_predictions"],
                     weight=self.model_weights.get(model_name, 0),
-                    recorded_at=datetime.now(timezone.utc),
+                    recorded_at=datetime.now(UTC),
                 )
                 db.add(record)
 
@@ -1064,9 +1037,7 @@ class SIALoop:
         finally:
             db.close()
 
-    def get_adjusted_probability(
-        self, base_prob: float, _model_name: str, recent_brier: float
-    ) -> float:
+    def get_adjusted_probability(self, base_prob: float, _model_name: str, recent_brier: float) -> float:
         """Adjust base probability based on recent model Brier Score."""
         confidence_factor = 1.0 - (recent_brier * 0.5)
         confidence_factor = max(0.5, min(1.0, confidence_factor))

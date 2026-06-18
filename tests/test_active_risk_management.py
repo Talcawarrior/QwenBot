@@ -2,13 +2,14 @@
 time decay, trailing stop, rebalancing, and model reversal detection."""
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 from config.settings import Config
 from engine.strategy import RiskManager
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def make_mock_bet(**kwargs):
     """Create a minimal Bet-like object with the fields RiskManager reads."""
@@ -31,10 +32,10 @@ def make_mock_bet(**kwargs):
     bet.realized_pnl = kwargs.get("realized_pnl", 0.0)
     bet.pnl = kwargs.get("pnl", 0.0)
     bet.status = kwargs.get("status", "placed")
-    bet.ladder_data = kwargs.get("ladder_data", None)
-    bet.result_data = kwargs.get("result_data", None)
-    bet.close_reason = kwargs.get("close_reason", None)
-    bet.closed_at = kwargs.get("closed_at", None)
+    bet.ladder_data = kwargs.get("ladder_data")
+    bet.result_data = kwargs.get("result_data")
+    bet.close_reason = kwargs.get("close_reason")
+    bet.closed_at = kwargs.get("closed_at")
     return bet
 
 
@@ -44,8 +45,7 @@ def make_mock_market(**kwargs):
     m.id = kwargs.get("id", "test_123")
     m.yes_price = kwargs.get("yes_price", 0.50)
     m.no_price = kwargs.get("no_price", 0.50)
-    resolution = kwargs.get("resolution_date",
-                            datetime.now(timezone.utc) + timedelta(days=2))
+    resolution = kwargs.get("resolution_date", datetime.now(UTC) + timedelta(days=2))
     m.resolution_date = resolution
     m.target_date = kwargs.get("target_date", resolution)
     return m
@@ -53,9 +53,11 @@ def make_mock_market(**kwargs):
 
 class _SignalObj:
     """Simple attribute-based signal object — not a MagicMock so getattr works."""
+
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
+
 
 def make_mock_signal(**kwargs):
     """Create a minimal signal/dict-like object for rebalance tests."""
@@ -76,6 +78,7 @@ def make_risk_manager():
 
 
 # ── Stop-Loss Tests ──────────────────────────────────────────────────────────
+
 
 class TestStopLoss:
     """RiskManager.check_stop_loss tests."""
@@ -120,6 +123,7 @@ class TestStopLoss:
 
 # ── Take-Profit Tests ────────────────────────────────────────────────────────
 
+
 class TestTakeProfit:
     """RiskManager.check_take_profit tests."""
 
@@ -155,6 +159,7 @@ class TestTakeProfit:
 
 # ── Time Decay Tests ─────────────────────────────────────────────────────────
 
+
 class TestTimeDecay:
     """RiskManager.check_time_decay tests."""
 
@@ -162,9 +167,7 @@ class TestTimeDecay:
         """Settlement'a <24h kala ve %10+ zarardaysa çık."""
         rm = make_risk_manager()
         bet = make_mock_bet(entry_price=0.50)
-        market = make_mock_market(
-            resolution_date=datetime.now(timezone.utc) + timedelta(hours=20)
-        )
+        market = make_mock_market(resolution_date=datetime.now(UTC) + timedelta(hours=20))
         should_exit, reason = rm.check_time_decay(bet, 0.42, market)
         assert should_exit is True
         assert "time_decay" in reason.lower()
@@ -173,9 +176,7 @@ class TestTimeDecay:
         """Settlement'a >24h kala tetiklenmemeli."""
         rm = make_risk_manager()
         bet = make_mock_bet(entry_price=0.50)
-        market = make_mock_market(
-            resolution_date=datetime.now(timezone.utc) + timedelta(hours=48)
-        )
+        market = make_mock_market(resolution_date=datetime.now(UTC) + timedelta(hours=48))
         should_exit, reason = rm.check_time_decay(bet, 0.42, market)
         assert should_exit is False
 
@@ -183,9 +184,7 @@ class TestTimeDecay:
         """Settlement'a <24h kala ama kardaysak tetiklenmez."""
         rm = make_risk_manager()
         bet = make_mock_bet(entry_price=0.50)
-        market = make_mock_market(
-            resolution_date=datetime.now(timezone.utc) + timedelta(hours=10)
-        )
+        market = make_mock_market(resolution_date=datetime.now(UTC) + timedelta(hours=10))
         should_exit, reason = rm.check_time_decay(bet, 0.55, market)
         assert should_exit is False
 
@@ -200,14 +199,13 @@ class TestTimeDecay:
         """Settlement zamanı geçmişse tetiklenmemeli (settlement halleder)."""
         rm = make_risk_manager()
         bet = make_mock_bet(entry_price=0.50)
-        market = make_mock_market(
-            resolution_date=datetime.now(timezone.utc) - timedelta(hours=2)
-        )
+        market = make_mock_market(resolution_date=datetime.now(UTC) - timedelta(hours=2))
         should_exit, reason = rm.check_time_decay(bet, 0.40, market)
         assert should_exit is False
 
 
 # ── Trailing Stop Tests ──────────────────────────────────────────────────────
+
 
 class TestTrailingStop:
     """RiskManager.check_trailing_stop tests."""
@@ -215,8 +213,7 @@ class TestTrailingStop:
     def test_trailing_stop_drop_from_peak(self):
         """Tepeden %15+ düşüşte trailing stop tetiklenmeli."""
         rm = make_risk_manager()
-        bet = make_mock_bet(entry_price=0.50,
-                            result_data=json.dumps({"peak_price": 0.90}))
+        bet = make_mock_bet(entry_price=0.50, result_data=json.dumps({"peak_price": 0.90}))
         should_exit, reason = rm.check_trailing_stop(bet, 0.70)
         assert should_exit is True
         assert "trailing_stop" in reason.lower()
@@ -224,16 +221,14 @@ class TestTrailingStop:
     def test_trailing_stop_small_drop(self):
         """%5 düşüşte tetiklenmemeli."""
         rm = make_risk_manager()
-        bet = make_mock_bet(entry_price=0.50,
-                            result_data=json.dumps({"peak_price": 0.80}))
+        bet = make_mock_bet(entry_price=0.50, result_data=json.dumps({"peak_price": 0.80}))
         should_exit, reason = rm.check_trailing_stop(bet, 0.77)
         assert should_exit is False
 
     def test_trailing_stop_new_peak_updates(self):
         """Yeni tepe noktası peak_price'ı güncellemeli."""
         rm = make_risk_manager()
-        bet = make_mock_bet(entry_price=0.50,
-                            result_data=json.dumps({"peak_price": 0.60}))
+        bet = make_mock_bet(entry_price=0.50, result_data=json.dumps({"peak_price": 0.60}))
         # Fiyat 0.80'e çıktı -> peak güncellenmeli
         rm.check_trailing_stop(bet, 0.80)
         data = json.loads(bet.result_data)
@@ -256,6 +251,7 @@ class TestTrailingStop:
 
 
 # ── Early Exit Combined Tests ────────────────────────────────────────────────
+
 
 class TestEarlyExit:
     """RiskManager.check_early_exit — stop-loss, take-profit, trailing-stop combined."""
@@ -281,8 +277,7 @@ class TestEarlyExit:
     def test_early_exit_trailing_stop(self):
         """Trailing stop tetiklenmeli."""
         rm = make_risk_manager()
-        bet = make_mock_bet(entry_price=0.50,
-                            result_data=json.dumps({"peak_price": 0.90}))
+        bet = make_mock_bet(entry_price=0.50, result_data=json.dumps({"peak_price": 0.90}))
         market = make_mock_market()
         should_exit, reason = rm.check_early_exit(bet, 0.70, market)
         assert should_exit is True
@@ -308,6 +303,7 @@ class TestEarlyExit:
 
 
 # ── Rebalance Tests ──────────────────────────────────────────────────────────
+
 
 class TestRebalance:
     """RiskManager.check_rebalance tests."""
@@ -345,6 +341,7 @@ class TestRebalance:
 
 
 # ── Model Reversal Tests ─────────────────────────────────────────────────────
+
 
 class TestModelReversal:
     """RiskManager.check_model_reversal tests."""
@@ -387,6 +384,7 @@ class TestModelReversal:
 
 # ── Position Sizing Tests ───────────────────────────────────────────────────
 
+
 class TestPositionSizing:
     """RiskManager.calculate_position_size_with_risk tests."""
 
@@ -415,6 +413,7 @@ class TestPositionSizing:
 
 
 # ── Edge Case / Safety Tests ─────────────────────────────────────────────────
+
 
 class TestEdgeCases:
     """RiskManager safety and edge case tests."""
@@ -455,8 +454,7 @@ class TestEdgeCases:
     def test_trailing_stop_corrupted_json(self):
         """Bozuk JSON'da hata vermemeli."""
         rm = make_risk_manager()
-        bet = make_mock_bet(entry_price=0.50,
-                            result_data="{corrupted json!!!}")
+        bet = make_mock_bet(entry_price=0.50, result_data="{corrupted json!!!}")
         should_exit, reason = rm.check_trailing_stop(bet, 0.40)
         # Bozuk JSON -> peak=entry_price -> 0.50->0.40 = %20 düşüş
         assert should_exit is True

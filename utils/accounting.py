@@ -30,7 +30,9 @@ def _get_portfolio(session) -> Portfolio:
 def _log(cash_before: float, cash_after: float, reason: str):
     logger.info(
         "ACCOUNTING: %s cash %.2f -> %.2f",
-        reason, cash_before, cash_after,
+        reason,
+        cash_before,
+        cash_after,
     )
 
 
@@ -53,10 +55,7 @@ def debit_stake(session, amount: float, reason: str) -> float:
     amount_r = _to_float(amount)
     cash_after = cash_before - amount_r
     if cash_after < 0:
-        raise ValueError(
-            f"Insufficient cash: have {cash_before:.2f}, need {amount_r:.2f} "
-            f"(reason={reason})"
-        )
+        raise ValueError(f"Insufficient cash: have {cash_before:.2f}, need {amount_r:.2f} (reason={reason})")
     cash_after = _to_float(cash_after)
     pf.cash_balance = cash_after
     _log(cash_before, cash_after, reason)

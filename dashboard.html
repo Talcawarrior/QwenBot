@@ -29,8 +29,9 @@
         
         /* Tabs */
         .tabs { display: flex; gap: 5px; margin-bottom: 20px; border-bottom: 2px solid #334155; }
-        .tab { padding: 12px 24px; background: #1e293b; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; }
-        .tab.active { background: #667eea; color: white; }
+        .tab { padding: 12px 24px; background: #1e293b; border: none; border-radius: 8px 8px 0 0; cursor: pointer; font-weight: 600; color: #e2e8f0; border-bottom: 3px solid transparent; transition: all 0.2s; }
+        .tab:hover { background: #334155; color: #ffffff; }
+        .tab.active { background: #667eea; color: #ffffff; border-bottom-color: #a78bfa; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         
@@ -134,23 +135,28 @@
             </div>
         </div>
         
-        <!-- Risk Limits - Compact -->
-        <div class="card-grid-compact">
-            <div class="card-compact">
-                <div class="card-title">Max Bahis</div>
-                <div class="card-value" style="font-size: 18px;" id="maxBet">%3</div>
-            </div>
-            <div class="card-compact">
-                <div class="card-title">Max Exposure</div>
-                <div class="card-value" style="font-size: 18px;" id="maxExposure">%25</div>
-            </div>
-            <div class="card-compact">
-                <div class="card-title">Daily Stop-Loss</div>
-                <div class="card-value" style="font-size: 18px;" id="dailyStop">%5</div>
-            </div>
-            <div class="card-compact">
-                <div class="card-title">City Cap</div>
-                <div class="card-value" style="font-size: 18px;" id="cityCap">4</div>
+        <!-- Bahis Istatistikleri - Tek Karta -->
+        <div style="margin-bottom: 20px;">
+            <div class="card" style="display: flex; justify-content: space-around; align-items: center; padding: 16px 24px;">
+                <div style="text-align: center;">
+                    <div class="card-title">Kapali Bahis</div>
+                    <div class="card-value" id="totalClosed" style="font-size: 22px; color: #667eea;">0</div>
+                </div>
+                <div style="width: 1px; height: 40px; background: #334155;"></div>
+                <div style="text-align: center;">
+                    <div class="card-title">Toplam Bahis</div>
+                    <div class="card-value" id="totalBetsAll" style="font-size: 22px; color: #a78bfa;">0</div>
+                </div>
+                <div style="width: 1px; height: 40px; background: #334155;"></div>
+                <div style="text-align: center;">
+                    <div class="card-title">Kazanilan</div>
+                    <div class="card-value positive" id="totalWon" style="font-size: 22px;">0</div>
+                </div>
+                <div style="width: 1px; height: 40px; background: #334155;"></div>
+                <div style="text-align: center;">
+                    <div class="card-title">Kaybedilen</div>
+                    <div class="card-value negative" id="totalLost" style="font-size: 22px;">0</div>
+                </div>
             </div>
         </div>
         
@@ -213,20 +219,6 @@
         
         <!-- Tab 3: History -->
         <div id="history" class="tab-content">
-            <div class="card-grid" style="margin-bottom: 20px;">
-                <div class="card">
-                    <div class="card-title">Kazanan</div>
-                    <div class="card-value positive" id="totalWon">0</div>
-                </div>
-                <div class="card">
-                    <div class="card-title">Kaybeden</div>
-                    <div class="card-value negative" id="totalLost">0</div>
-                </div>
-                <div class="card">
-                    <div class="card-title">Win Rate</div>
-                    <div class="card-value" id="winRate">0%</div>
-                </div>
-            </div>
             <table>
                 <thead>
                     <tr>
@@ -386,26 +378,11 @@
                 document.getElementById('exposure').textContent = `$${data.portfolio.exposure.toFixed(2)} / $${maxExp.toFixed(2)}`;
                 document.getElementById('exposure').className = `card-value ${data.portfolio.exposure <= maxExp ? '' : 'negative'}`;
 
-                // Total signals / bets counters. These used to update only
-                // via the scan_complete WebSocket message, which meant the
-                // very first /api/status response after a page reload (or
-                // any moment between WS broadcasts) showed 0/0 even when
-                // the DB had real rows. Keep the WS path as a fast-path
-                // update; this REST path is the source of truth.
-                if (data.stats) {
-                    if (typeof data.stats.total_signals === 'number') {
-                        document.getElementById('totalSignals').textContent = data.stats.total_signals;
-                    }
-                    if (typeof data.stats.total_bets === 'number') {
-                        document.getElementById('totalBets').textContent = data.stats.total_bets;
-                    }
-                }
-
-                // Update limits
-                document.getElementById('maxBet').textContent = `%${data.limits.max_bet_pct}`;
-                document.getElementById('maxExposure').textContent = `%${data.limits.max_exposure_pct}`;
-                document.getElementById('dailyStop').textContent = `%${data.limits.daily_stop_loss_pct}`;
-                document.getElementById('cityCap').textContent = data.limits.city_cap;
+                // Update bet stats
+                document.getElementById('totalClosed').textContent = data.stats.total_closed;
+                document.getElementById('totalBetsAll').textContent = data.stats.total_bets;
+                document.getElementById('totalWon').textContent = data.stats.win_count;
+                document.getElementById('totalLost').textContent = data.stats.loss_count;
             } catch (err) {
                 console.error('Status load error:', err);
             }
@@ -523,12 +500,6 @@
                 const data = await res.json();
                 const tbody = document.getElementById('historyTable');
                 
-                if (data.stats) {
-                    document.getElementById('totalWon').textContent = data.stats.total_won;
-                    document.getElementById('totalLost').textContent = data.stats.total_lost;
-                    document.getElementById('winRate').textContent = `${data.stats.win_rate}%`;
-                }
-                
                 if (!data.history || data.history.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px;">Henüz sonuçlanmış bahis yok</td></tr>';
                     return;
@@ -588,6 +559,7 @@
             if (tabId === 'signals') loadSignals();
             if (tabId === 'markets') loadMarkets();
             if (tabId === 'history') loadHistory();
+            if (tabId === 'analytics') loadAnalytics();
         }
         
         // Initialize
@@ -604,34 +576,88 @@
                 loadSignals();
             }, 5000);
             
-            // Analytics Charts
-            const ctxPortfolio = document.getElementById('portfolioChart').getContext('2d');
-            new Chart(ctxPortfolio, {
-                type: 'line',
-                data: {
-                    labels: Array.from({length: 10}, (_, i) => i + 1),
-                    datasets: [{
-                        label: 'Portfolio Değeri ($)',
-                        data: [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000],
-                        borderColor: '#667eea',
-                        tension: 0.1
-                    }]
-                },
-                options: { responsive: true, scales: { y: { beginAtZero: false } } }
-            });
+            // Analytics Charts - dynamic from API
+            let portfolioChart = null;
+            let winRateChart = null;
 
-            const ctxWinRate = document.getElementById('winRateChart').getContext('2d');
-            new Chart(ctxWinRate, {
-                type: 'doughnut',
-                data: {
-                    labels: ['Kazanılan', 'Kaybedilen'],
-                    datasets: [{
-                        data: [0, 0],
-                        backgroundColor: ['#22c55e', '#ef4444']
-                    }]
-                },
-                options: { responsive: true }
-            });
+            async function loadAnalytics() {
+                try {
+                    const [statusRes, historyRes] = await Promise.all([
+                        fetch(`${API_BASE}/api/status`),
+                        fetch(`${API_BASE}/api/history`)
+                    ]);
+                    const status = await statusRes.json();
+                    const history = await historyRes.json();
+
+                    // --- Portfolio Chart: build from settled bets timeline ---
+                    const portfolioCtx = document.getElementById('portfolioChart').getContext('2d');
+                    const initial = status.portfolio.initial;
+                    const settled = (history.history || []).slice().reverse();
+                    const labels = [];
+                    const portfolioData = [];
+                    let running = initial;
+                    labels.push('Baslangic');
+                    portfolioData.push(initial);
+                    settled.forEach((bet, i) => {
+                        running += bet.realized_pnl;
+                        labels.push('#' + bet.id);
+                        portfolioData.push(Math.round(running * 100) / 100);
+                    });
+                    if (portfolioChart) portfolioChart.destroy();
+                    portfolioChart = new Chart(portfolioCtx, {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Portfolio Degeri ($)',
+                                data: portfolioData,
+                                borderColor: '#667eea',
+                                backgroundColor: 'rgba(102,126,234,0.1)',
+                                fill: true,
+                                tension: 0.3,
+                                pointRadius: 4,
+                                pointBackgroundColor: portfolioData.map((v, i) =>
+                                    i === 0 ? '#94a3b8' : (portfolioData[i] >= portfolioData[i-1] ? '#22c55e' : '#ef4444')
+                                )
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            scales: { y: { beginAtZero: false } },
+                            plugins: { legend: { display: true } }
+                        }
+                    });
+
+                    // --- Win Rate Doughnut ---
+                    const winCtx = document.getElementById('winRateChart').getContext('2d');
+                    const totalWon = history.stats ? history.stats.total_won : 0;
+                    const totalLost = history.stats ? history.stats.total_lost : 0;
+                    if (winRateChart) winRateChart.destroy();
+                    winRateChart = new Chart(winCtx, {
+                        type: 'doughnut',
+                        data: {
+                            labels: ['Kazanilan', 'Kaybedilen'],
+                            datasets: [{
+                                data: [totalWon, totalLost],
+                                backgroundColor: ['#22c55e', '#ef4444'],
+                                borderWidth: 2,
+                                borderColor: '#1e293b'
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: {
+                                legend: { position: 'bottom' }
+                            }
+                        }
+                    });
+                } catch (err) {
+                    console.error('Analytics load error:', err);
+                }
+            }
+
+            // Load analytics on tab switch and on init
+            loadAnalytics();
         });
     </script>
 </body>

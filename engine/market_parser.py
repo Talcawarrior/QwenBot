@@ -140,29 +140,27 @@ class MarketParser:
         """
         # 1) Açık birim varsa (°F / °C / Fahrenheit / Celsius, sayıya bitişik)
         explicit = re.search(
-            r'(?:\d\s*°?\s*[Ff](?:ahrenheit)?|°[Ff]|'
-            r'\d\s*°?\s*[Cc](?:elsius)?|°[Cc])',
+            r"(?:\d\s*°?\s*[Ff](?:ahrenheit)?|°[Ff]|"
+            r"\d\s*°?\s*[Cc](?:elsius)?|°[Cc])",
             question,
         )
         if explicit:
             unit_text = explicit.group(0).upper()
-            if 'F' in unit_text:
-                return 'fahrenheit'
-            return 'celsius'
+            if "F" in unit_text:
+                return "fahrenheit"
+            return "celsius"
 
         # 2) Birim yoksa, şehre göre karar ver
         if city:
             for alias, icao in Config.CITY_ICAO_MAP.items():
                 if alias.lower() in city.lower():
                     # US/territory ICAO'ları K ile başlar
-                    return 'fahrenheit' if icao.upper().startswith('K') else 'celsius'
+                    return "fahrenheit" if icao.upper().startswith("K") else "celsius"
 
         # 3) Varsayılan
-        return 'celsius'
+        return "celsius"
 
-    def _extract_threshold(
-        self, question: str
-    ) -> tuple[float, str, float | None, float | None] | None:
+    def _extract_threshold(self, question: str) -> tuple[float, str, float | None, float | None] | None:
         """Sıcaklık eşiğini ve varsa aralığı bul.
 
         Returns
@@ -176,7 +174,7 @@ class MarketParser:
 
         # ── 1) Aralık kalıbı (range): "between A-B°F/°C"
         range_match = re.search(
-            r'between\s+(\d+\.?\d*)\s*[-–]\s*(\d+\.?\d*)\s*°?\s*([FfCc]?)',
+            r"between\s+(\d+\.?\d*)\s*[-–]\s*(\d+\.?\d*)\s*°?\s*([FfCc]?)",
             question,
             re.IGNORECASE,
         )
@@ -184,12 +182,9 @@ class MarketParser:
             try:
                 low_val = float(range_match.group(1))
                 high_val = float(range_match.group(2))
-                unit_char = range_match.group(3).lower() if range_match.group(3) else ''
+                unit_char = range_match.group(3).lower() if range_match.group(3) else ""
                 # Birim belirtilmemişse şehre göre karar ver
-                is_f = unit_char == 'f' or (
-                    not unit_char
-                    and self._resolve_unit(question, city) == 'fahrenheit'
-                )
+                is_f = unit_char == "f" or (not unit_char and self._resolve_unit(question, city) == "fahrenheit")
                 if is_f:
                     low_c = round((low_val - 32) * 5 / 9, 1)
                     high_c = round((high_val - 32) * 5 / 9, 1)
@@ -197,38 +192,38 @@ class MarketParser:
                     low_c = round(low_val, 1)
                     high_c = round(high_val, 1)
                 mid = round((low_c + high_c) / 2, 1)
-                return (mid, 'celsius', low_c, high_c)
+                return (mid, "celsius", low_c, high_c)
             except ValueError:
                 pass
 
         # ── 2) Açık birimli tek değer
         patterns = [
-            (r'(\d+\.?\d*)\s*°?\s*[Ff](?:ahrenheit)?', 'fahrenheit'),
-            (r'(\d+\.?\d*)\s*°?\s*[Cc](?:elsius)?', 'celsius'),
-            (r'(\d+\.?\d*)\s*degrees?\s*[Ff]', 'fahrenheit'),
-            (r'(\d+\.?\d*)\s*degrees?\s*[Cc]', 'celsius'),
+            (r"(\d+\.?\d*)\s*°?\s*[Ff](?:ahrenheit)?", "fahrenheit"),
+            (r"(\d+\.?\d*)\s*°?\s*[Cc](?:elsius)?", "celsius"),
+            (r"(\d+\.?\d*)\s*degrees?\s*[Ff]", "fahrenheit"),
+            (r"(\d+\.?\d*)\s*degrees?\s*[Cc]", "celsius"),
         ]
         for pattern, expected_unit in patterns:
             match = re.search(pattern, question)
             if match:
                 try:
                     value = float(match.group(1))
-                    if expected_unit == 'fahrenheit':
+                    if expected_unit == "fahrenheit":
                         value_c = round((value - 32) * 5 / 9, 1)
                     else:
                         value_c = round(value, 1)
-                    return (value_c, 'celsius', None, None)
+                    return (value_c, "celsius", None, None)
                 except ValueError:
                     continue
 
         # ── 3) Birimsiz sayı kalıpları (exceed, above, below, be, over, under)
         unitless_patterns = [
-            r'exceed\s+(\d+\.?\d*)',
-            r'above\s+(\d+\.?\d*)',
-            r'below\s+(\d+\.?\d*)',
-            r'over\s+(\d+\.?\d*)',
-            r'under\s+(\d+\.?\d*)',
-            r'be\s+(\d+\.?\d*)',
+            r"exceed\s+(\d+\.?\d*)",
+            r"above\s+(\d+\.?\d*)",
+            r"below\s+(\d+\.?\d*)",
+            r"over\s+(\d+\.?\d*)",
+            r"under\s+(\d+\.?\d*)",
+            r"be\s+(\d+\.?\d*)",
         ]
         detected_unit = self._resolve_unit(question, city)
 
@@ -237,11 +232,11 @@ class MarketParser:
             if match:
                 try:
                     value = float(match.group(1))
-                    if detected_unit == 'fahrenheit':
+                    if detected_unit == "fahrenheit":
                         value_c = round((value - 32) * 5 / 9, 1)
                     else:
                         value_c = round(value, 1)
-                    return (value_c, 'celsius', None, None)
+                    return (value_c, "celsius", None, None)
                 except ValueError:
                     continue
 
@@ -250,13 +245,13 @@ class MarketParser:
     def _extract_date(self, question: str) -> datetime | None:
         """Tarih bul."""
         patterns = [
-            r'(\w+ \d{1,2},?\s*\d{4})',        # July 4, 2025
-            r'(\d{4}-\d{2}-\d{2})',            # 2025-07-04
-            r'(\d{1,2}/\d{1,2}/\d{4})',        # 7/4/2025
+            r"(\w+ \d{1,2},?\s*\d{4})",  # July 4, 2025
+            r"(\d{4}-\d{2}-\d{2})",  # 2025-07-04
+            r"(\d{1,2}/\d{1,2}/\d{4})",  # 7/4/2025
             # Use word-boundary on "on" so substrings like "London" don't
             # accidentally match (the "on" inside "London" is preceded by
             # a word character, so \b prevents a match there).
-            r'\bon\s+(\w+\s+\d{1,2})\b',       # on May 20
+            r"\bon\s+(\w+\s+\d{1,2})\b",  # on May 20
         ]
 
         for pattern in patterns:
@@ -315,6 +310,7 @@ class MarketParser:
                 market.city = city.title()
                 # Map city code (for ICAO compatibility)
                 from scrapers.polymarket import PolymarketScraper
+
                 for k, v in config.CITY_ICAO_MAP.items():
                     if k in city.lower():
                         market.city_code = v
@@ -347,10 +343,11 @@ class MarketParser:
         """Parse edilmemiş tüm marketleri parse et."""
         count = 0
         with get_session() as session:
-            unparsed = session.query(WeatherMarket).filter(
-                WeatherMarket.city.is_(None) |
-                WeatherMarket.target_date.is_(None)
-            ).all()
+            unparsed = (
+                session.query(WeatherMarket)
+                .filter(WeatherMarket.city.is_(None) | WeatherMarket.target_date.is_(None))
+                .all()
+            )
             market_ids = [m.id for m in unparsed]
 
         for mid in market_ids:

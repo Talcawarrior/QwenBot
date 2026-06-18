@@ -1,4 +1,5 @@
 """Tests for Faz 2.5-3.5: Ensemble fix + should_bet filter tightening."""
+
 import os
 import tempfile
 
@@ -38,30 +39,47 @@ def _setup_market(market_id="test-m1", threshold=30.0, yes_price=0.35):
     tomorrow = datetime.now() + timedelta(days=1)
     with get_session() as s:
         s.add(Portfolio(id=1, cash_balance=990.0, total_value=1000.0, current_value=1000.0))
-        s.add(WeatherMarket(
-            id=market_id, question="Will temp exceed 30C?",
-            city="New York", city_code="KLGA", metric="temperature_max",
-            threshold=threshold, target_date=tomorrow,
-            yes_price=yes_price, no_price=round(1.0 - yes_price, 2),
-            status="open", latitude=40.7128, longitude=-74.0060,
-        ))
+        s.add(
+            WeatherMarket(
+                id=market_id,
+                question="Will temp exceed 30C?",
+                city="New York",
+                city_code="KLGA",
+                metric="temperature_max",
+                threshold=threshold,
+                target_date=tomorrow,
+                yes_price=yes_price,
+                no_price=round(1.0 - yes_price, 2),
+                status="open",
+                latitude=40.7128,
+                longitude=-74.0060,
+            )
+        )
         s.commit()
 
 
 def _add_forecast(market_id, source, value):
     with get_session() as s:
-        s.add(WeatherForecast(
-            market_id=market_id, city="New York", lat=40.7128, lon=-74.0060,
-            target_date=datetime.now() + timedelta(days=1),
-            metric="temperature_max", source=source, predicted_value=value,
-            fetched_at=datetime.now(),
-        ))
+        s.add(
+            WeatherForecast(
+                market_id=market_id,
+                city="New York",
+                lat=40.7128,
+                lon=-74.0060,
+                target_date=datetime.now() + timedelta(days=1),
+                metric="temperature_max",
+                source=source,
+                predicted_value=value,
+                fetched_at=datetime.now(),
+            )
+        )
         s.commit()
 
 
 def _analyze_and_get(market_id):
     """Run analyze_market, then query result inside same session."""
     from engine.calculator import Calculator
+
     calc = Calculator()
     calc.analyze_market(market_id)
     # Query and extract values inside session
@@ -78,6 +96,7 @@ def _analyze_and_get(market_id):
 
 def test_config_tighter():
     from config.settings import StrategyConfig
+
     s = StrategyConfig()
     assert s.min_edge == 0.05
     assert s.max_bet_amount == 30.0
@@ -91,13 +110,22 @@ def test_should_bet_rejects_low_edge():
     tomorrow = datetime.now() + timedelta(days=1)
     with get_session() as s:
         s.add(Portfolio(id=1, cash_balance=990.0, total_value=1000.0, current_value=1000.0))
-        s.add(WeatherMarket(
-            id="test-low-edge", question="Will temp exceed 30C?",
-            city="New York", city_code="KLGA", metric="temperature_max",
-            threshold=30.0, target_date=tomorrow,
-            yes_price=0.56, no_price=0.44,
-            status="open", latitude=40.7128, longitude=-74.0060,
-        ))
+        s.add(
+            WeatherMarket(
+                id="test-low-edge",
+                question="Will temp exceed 30C?",
+                city="New York",
+                city_code="KLGA",
+                metric="temperature_max",
+                threshold=30.0,
+                target_date=tomorrow,
+                yes_price=0.56,
+                no_price=0.44,
+                status="open",
+                latitude=40.7128,
+                longitude=-74.0060,
+            )
+        )
         s.commit()
     for src, val in [("gfs_seamless", 30.2), ("ecmwf_ifs04", 30.1), ("gem_seamless", 30.3)]:
         _add_forecast("test-low-edge", src, val)
@@ -136,13 +164,22 @@ def test_should_bet_rejects_small_amount():
     tomorrow = datetime.now() + timedelta(days=1)
     with get_session() as s:
         s.add(Portfolio(id=1, cash_balance=50.0, total_value=50.0, current_value=50.0))
-        s.add(WeatherMarket(
-            id="test-small", question="Will temp exceed 30C?",
-            city="New York", city_code="KLGA", metric="temperature_max",
-            threshold=30.0, target_date=tomorrow,
-            yes_price=0.30, no_price=0.70,
-            status="open", latitude=40.7128, longitude=-74.0060,
-        ))
+        s.add(
+            WeatherMarket(
+                id="test-small",
+                question="Will temp exceed 30C?",
+                city="New York",
+                city_code="KLGA",
+                metric="temperature_max",
+                threshold=30.0,
+                target_date=tomorrow,
+                yes_price=0.30,
+                no_price=0.70,
+                status="open",
+                latitude=40.7128,
+                longitude=-74.0060,
+            )
+        )
         s.commit()
     for src, val in [("gfs_seamless", 33.0), ("ecmwf_ifs04", 33.5), ("gem_seamless", 32.8)]:
         _add_forecast("test-small", src, val)
@@ -163,13 +200,22 @@ def test_ev_positive_check():
     # yes_price=0.50 → edge ≈ 0.00 → both YES/NO edges near zero → should reject
     with get_session() as s:
         s.add(Portfolio(id=1, cash_balance=990.0, total_value=1000.0, current_value=1000.0))
-        s.add(WeatherMarket(
-            id="test-ev", question="Will temp exceed 30C?",
-            city="New York", city_code="KLGA", metric="temperature_max",
-            threshold=30.0, target_date=tomorrow,
-            yes_price=0.50, no_price=0.50,
-            status="open", latitude=40.7128, longitude=-74.0060,
-        ))
+        s.add(
+            WeatherMarket(
+                id="test-ev",
+                question="Will temp exceed 30C?",
+                city="New York",
+                city_code="KLGA",
+                metric="temperature_max",
+                threshold=30.0,
+                target_date=tomorrow,
+                yes_price=0.50,
+                no_price=0.50,
+                status="open",
+                latitude=40.7128,
+                longitude=-74.0060,
+            )
+        )
         s.commit()
     for src, val in [("gfs_seamless", 30.0), ("ecmwf_ifs04", 30.1), ("gem_seamless", 29.9)]:
         _add_forecast("test-ev", src, val)
@@ -182,6 +228,7 @@ def test_ev_positive_check():
 
 def test_metoo_filter_has_lat_lon():
     import pathlib
+
     # Use latin-1 or ignore errors to handle non-utf8 characters in the source file
     text = pathlib.Path("scrapers/meteo.py").read_text(encoding="utf-8", errors="ignore")
     assert "WeatherMarket.latitude != 0" in text
@@ -191,4 +238,5 @@ def test_metoo_filter_has_lat_lon():
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__, "-v"])

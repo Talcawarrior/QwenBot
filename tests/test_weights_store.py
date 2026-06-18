@@ -1,4 +1,4 @@
-﻿"""SIA weight persistence: load on init, save on optimize, no-spam threshold."""
+"""SIA weight persistence: load on init, save on optimize, no-spam threshold."""
 
 import os
 
@@ -63,6 +63,7 @@ def test_sialoop_loads_persisted_weights_on_init(tmp_path, monkeypatch):
     import importlib
 
     import engine.strategy as strategy_mod
+
     importlib.reload(strategy_mod)
 
     sia = strategy_mod.SIALoop(None, strategy_mod.config)

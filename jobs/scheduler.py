@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import func
 
@@ -15,6 +15,7 @@ logger = logging.getLogger("JOBS_SCHEDULER")
 def run_fetch_markets():
     """Fetch markets from Polymarket and save to raw weather_markets."""
     from scrapers.polymarket import PolymarketScraper
+
     scraper = PolymarketScraper()
     count = scraper.fetch_and_save()
     return f"{count} market çekildi ve kaydedildi"
@@ -23,6 +24,7 @@ def run_fetch_markets():
 def run_parse_markets():
     """Parse raw weather_markets to extract structured fields."""
     from engine.market_parser import MarketParser
+
     parser = MarketParser()
     count = parser.parse_all_unparsed()
     return f"{count} market parse edildi"
@@ -31,6 +33,7 @@ def run_parse_markets():
 def run_fetch_weather():
     """Fetch forecast values for parsed weather_markets."""
     from scrapers.meteo import MeteoFetcher
+
     fetcher = MeteoFetcher()
     count = fetcher.fetch_all_markets()
     return f"{count} hava tahmini çekildi ve kaydedildi"
@@ -39,14 +42,19 @@ def run_fetch_weather():
 def run_analyze():
     """Run forecast analyses for open markets."""
     from engine.calculator import Calculator
+
     calc = Calculator()
     analyzed = 0
     with get_session() as session:
-        markets = session.query(WeatherMarket).filter(
-            WeatherMarket.status == "open",
-            WeatherMarket.city.isnot(None),
-            WeatherMarket.target_date > datetime.now(timezone.utc).replace(tzinfo=None),
-        ).all()
+        markets = (
+            session.query(WeatherMarket)
+            .filter(
+                WeatherMarket.status == "open",
+                WeatherMarket.city.isnot(None),
+                WeatherMarket.target_date > datetime.now(UTC).replace(tzinfo=None),
+            )
+            .all()
+        )
         market_ids = [m.id for m in markets]
 
     for mid in market_ids:
@@ -64,6 +72,7 @@ def run_analyze():
 def run_place_bets():
     """Execute betting strategy and place live/paper bets."""
     from executor.bet_placer import BetPlacer
+
     placer = BetPlacer()
     count = placer.place_all_pending()
     return f"{count} adet yeni bet açıldı"
@@ -85,19 +94,13 @@ def run_update_prices():
     open_statuses = OPEN_BET_STATUSES
     updated = 0
     with get_session() as session:
-        bets = (
-            session.query(Bet)
-            .filter(Bet.status.in_(open_statuses))
-            .all()
-        )
+        bets = session.query(Bet).filter(Bet.status.in_(open_statuses)).all()
 
         # Pre-fetch price map: market_id -> prices
         market_ids = list(set(b.market_id for b in bets if b.market_id))
         price_map = {}
         if market_ids:
-            markets = session.query(WeatherMarket).filter(
-                WeatherMarket.id.in_(market_ids)
-            ).all()
+            markets = session.query(WeatherMarket).filter(WeatherMarket.id.in_(market_ids)).all()
             for m in markets:
                 price_map[m.id] = {
                     "yes": float(m.yes_price) if m.yes_price is not None else 0.5,
@@ -128,7 +131,7 @@ def run_update_prices():
             # so the same (current - entry) * shares formula works for both sides.
             bet.unrealized_pnl = round(shares * (current - entry), 2)
 
-            total_unrealized += (bet.unrealized_pnl or 0.0)
+            total_unrealized += bet.unrealized_pnl or 0.0
 
             # 2. Ladder fill check — only status=="pending" rungs fill.
             # L1 is already "filled" at open (bet_placer), so safe from double-debit.
@@ -150,14 +153,11 @@ def run_update_prices():
                                     should_fill = current <= trigger_price
                                 if should_fill and rung_size > 0:
                                     rung["status"] = "filled"
-                                    rung["filled_at"] = datetime.now(timezone.utc).isoformat()
+                                    rung["filled_at"] = datetime.now(UTC).isoformat()
                                     filled_amount += rung_size
                         if filled_amount > 0:
                             bet.ladder_data = json.dumps(ladder)
-                            debit_stake(
-                                session, filled_amount,
-                                f"ladder_fill:{bet.market_id}"
-                            )
+                            debit_stake(session, filled_amount, f"ladder_fill:{bet.market_id}")
                 except Exception as e:
                     logger.warning("Ladder parse hatası %s: %s", bet.id, e)
 
@@ -169,9 +169,7 @@ def run_update_prices():
         portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
         if portfolio:
             realized_pnl_total = (
-                session.query(func.coalesce(func.sum(Bet.pnl), 0.0))
-                .filter(Bet.status.in_(("won", "lost")))
-                .scalar()
+                session.query(func.coalesce(func.sum(Bet.pnl), 0.0)).filter(Bet.status.in_(("won", "lost"))).scalar()
             ) or 0.0
             open_exposure = (
                 session.query(func.coalesce(func.sum(Bet.amount), 0.0))
@@ -185,7 +183,7 @@ def run_update_prices():
                 cash = (portfolio.initial_value or 1000.0) + float(realized_pnl_total)
             portfolio.total_value = round(cash + float(open_exposure), 2)
             portfolio.current_value = portfolio.total_value  # Sync current_value
-            portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
+            portfolio.last_updated = datetime.now(UTC).replace(tzinfo=None)
             session.add(portfolio)
 
         session.commit()
@@ -195,6 +193,7 @@ def run_update_prices():
 def run_settle():
     """Settle resolved bets against actual weather data."""
     from executor.settler import SettlementEngine
+
     engine = SettlementEngine()
     results = engine.settle_all()
     return f"Sonuçlandırılan -> Kazanan:{results['win']}, Kaybeden:{results['loss']}, Bekleyen:{results['pending']}"
@@ -206,9 +205,7 @@ def run_report():
         total_bets = session.query(Bet).count()
         won = session.query(Bet).filter(Bet.status == "won").count()
         lost = session.query(Bet).filter(Bet.status == "lost").count()
-        open_markets = session.query(WeatherMarket).filter(
-            WeatherMarket.status == "open"
-        ).count()
+        open_markets = session.query(WeatherMarket).filter(WeatherMarket.status == "open").count()
 
         total_pnl = session.query(func.sum(Bet.pnl)).scalar() or 0.0
 
@@ -264,9 +261,12 @@ def run_risk_management():
 
             # Check model reversal if analysis exists
             if not should_exit:
-                analysis = session.query(Analysis).filter(
-                    Analysis.market_id == bet.market_id
-                ).order_by(Analysis.analyzed_at.desc()).first()
+                analysis = (
+                    session.query(Analysis)
+                    .filter(Analysis.market_id == bet.market_id)
+                    .order_by(Analysis.analyzed_at.desc())
+                    .first()
+                )
                 rev_exit, rev_reason = rm.check_model_reversal(bet, analysis)
                 if rev_exit:
                     should_exit, reason = True, rev_reason
@@ -299,7 +299,7 @@ def run_risk_management():
 
                 bet.status = "closed_early"
                 bet.close_reason = reason
-                bet.closed_at = datetime.now(timezone.utc)
+                bet.closed_at = datetime.now(UTC)
                 bet.realized_pnl = realized
                 bet.pnl = realized
                 bet.current_price = current_price
@@ -312,14 +312,18 @@ def run_risk_management():
                 portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
                 if portfolio:
                     portfolio.total_value = round(portfolio.cash_balance or 0.0, 2)
-                    portfolio.last_updated = datetime.now(timezone.utc)
+                    portfolio.last_updated = datetime.now(UTC)
 
                 session.add(bet)
                 session.add(portfolio) if portfolio else None
                 closed_count += 1
                 logger.info(
                     "Early exit bet=%s market=%s reason=%s realized=$%.2f proceeds=$%.2f",
-                    bet.id, bet.market_id, reason, realized, proceeds,
+                    bet.id,
+                    bet.market_id,
+                    reason,
+                    realized,
+                    proceeds,
                 )
 
         session.commit()

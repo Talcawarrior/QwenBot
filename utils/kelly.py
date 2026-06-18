@@ -1,4 +1,4 @@
-﻿"""Kelly criterion math, shared by engine.calculator and engine.strategy.
+"""Kelly criterion math, shared by engine.calculator and engine.strategy.
 
 Two callers existed with the same formula but different parameter names
 and slightly different edges (calculator returned a raw fraction, strategy

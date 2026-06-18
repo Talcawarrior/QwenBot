@@ -73,9 +73,7 @@ def _ensure_db_init():
 def _migrate_add_column(table: str, column: str, col_type: str) -> None:
     """Idempotent ALTER TABLE ADD COLUMN for SQLite."""
     with engine.connect() as conn:
-        row = conn.execute(
-            text(f"PRAGMA table_info({table})")
-        ).fetchall()
+        row = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
         existing = [r[1] for r in row]  # column name is at index 1
         if column not in existing:
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
@@ -119,6 +117,7 @@ def ensure_initial_portfolio():
     """
     from config.settings import config
     from database.models import Portfolio
+
     with get_session() as session:
         portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
         if not portfolio:

@@ -6,25 +6,29 @@ test bets and cleaning them up in fixtures.
 
 import os
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
 # ── Module-scoped client (same pattern as test_api_integration.py) ─────
 
+
 @pytest.fixture(scope="module")
 def client():
     import main as app_module
+
     with TestClient(app_module.app) as c:
         yield c
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
+
 def _clean_bets(session, prefix="test-api-bets-"):
     """Remove test bets with matching market_id prefix using raw SQL."""
     from sqlalchemy import text
+
     session.execute(
         text("DELETE FROM bets WHERE market_id LIKE :pat"),
         {"pat": f"{prefix}%"},
@@ -35,6 +39,7 @@ def _clean_bets(session, prefix="test-api-bets-"):
 def _insert_bets(session, n=5, status="won", prefix="test-api-bets"):
     """Insert n test bets into the production DB."""
     from database.models import Bet
+
     for i in range(n):
         mkt_id = f"{prefix}-{status}-{i:03d}"
         b = Bet(
@@ -47,14 +52,15 @@ def _insert_bets(session, n=5, status="won", prefix="test-api-bets"):
             status=status,
             realized_pnl=10.0 if status == "won" else -10.0,
             unrealized_pnl=0.0,
-            placed_at=datetime.now(timezone.utc) - timedelta(hours=i),
-            settled_at=datetime.now(timezone.utc) if status in ("won", "lost") else None,
+            placed_at=datetime.now(UTC) - timedelta(hours=i),
+            settled_at=datetime.now(UTC) if status in ("won", "lost") else None,
         )
         session.add(b)
     session.commit()
 
 
 # ── Tests ──────────────────────────────────────────────────────────────
+
 
 class TestApiBetsEndpoint:
     """3 tests using the production DB; test data is cleaned up after each test."""
@@ -65,6 +71,7 @@ class TestApiBetsEndpoint:
         yield
         # After each test, clean up any test bets we created
         from database.db import get_session
+
         with get_session() as session:
             _clean_bets(session, "test-api-bets")
 
@@ -72,6 +79,7 @@ class TestApiBetsEndpoint:
         """GET /api/bets -> 200, 'bets' list and 'count' field present."""
         # Insert some test data first
         from database.db import get_session
+
         with get_session() as session:
             _insert_bets(session, n=3, status="won")
 
@@ -86,14 +94,25 @@ class TestApiBetsEndpoint:
 
         # Verify bet schema
         for b in data["bets"]:
-            for key in ("id", "market_id", "city", "side", "amount",
-                        "entry_price", "current_price", "status",
-                        "realized_pnl", "unrealized_pnl", "placed_at"):
+            for key in (
+                "id",
+                "market_id",
+                "city",
+                "side",
+                "amount",
+                "entry_price",
+                "current_price",
+                "status",
+                "realized_pnl",
+                "unrealized_pnl",
+                "placed_at",
+            ):
                 assert key in b, f"Missing '{key}' in bet: {list(b.keys())}"
 
     def test_bets_filter_status(self, client):
         """status=won returns only won bets; status=lost returns only lost."""
         from database.db import get_session
+
         with get_session() as session:
             _insert_bets(session, n=2, status="won")
             _insert_bets(session, n=3, status="lost")
@@ -124,6 +143,7 @@ class TestApiBetsEndpoint:
     def test_bets_pagination(self, client):
         """limit & offset slice correctly."""
         from database.db import get_session
+
         with get_session() as session:
             _insert_bets(session, n=10, status="won")
 
@@ -170,6 +190,7 @@ class TestLazyInitDb:
         # Create fresh temp engine + sessionmaker
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
+
         _fresh_engine = create_engine(f"sqlite:///{_tmp_path}")
         _fresh_session_factory = sessionmaker(bind=_fresh_engine)
 

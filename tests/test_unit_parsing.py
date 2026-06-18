@@ -80,9 +80,7 @@ class TestUnitParsing:
         assert r is not None, "expected a result"
         value_c, low_c, high_c = r
         # 90°F → 32.22°C
-        assert abs(value_c - 32.2) < 0.2, (
-            f"Miami should be Fahrenheit: got {value_c}°C, expected ~32.2"
-        )
+        assert abs(value_c - 32.2) < 0.2, f"Miami should be Fahrenheit: got {value_c}°C, expected ~32.2"
         assert low_c is None
         assert high_c is None
 
@@ -101,9 +99,7 @@ class TestUnitParsing:
 
     def test_no_false_f_from_words(self):
         """'highest' içindeki 'f' °F tetiklememeli; °C açık olduğu için."""
-        r = self._extract(
-            "Will the highest temperature in Paris be 25°C or higher?"
-        )
+        r = self._extract("Will the highest temperature in Paris be 25°C or higher?")
         assert r is not None, "expected a result"
         value_c, low_c, high_c = r
         assert value_c == 25.0, f"expected 25.0°C (Paris, °C explicit), got {value_c}"

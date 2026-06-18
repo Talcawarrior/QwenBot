@@ -13,6 +13,7 @@ Defaults:
   - Failures live for 5 minutes (long enough to ride out a
     burst of 429s, short enough to retry the next scan cycle).
 """
+
 import time as _time
 
 _FETCH_CACHE: dict[tuple[float, float, str, str], tuple] = {}

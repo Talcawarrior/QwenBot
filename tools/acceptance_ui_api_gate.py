@@ -1,4 +1,4 @@
-﻿"""Acceptance gate: validates /api/signals, /api/status, /api/bets, /api/markets
+"""Acceptance gate: validates /api/signals, /api/status, /api/bets, /api/markets
 against a running server at http://127.0.0.1:8091.
 
 Exit 0 on PASS, exit 1 on FAIL.
@@ -50,28 +50,20 @@ def main():
         signals_count = body_g.get("count", 0)
 
         if total_bets > 0 and signals_count == 0:
-            errors.append(
-                f"Consistency FAIL: status.total_bets={total_bets} "
-                f"but signals.count={signals_count}"
-            )
+            errors.append(f"Consistency FAIL: status.total_bets={total_bets} but signals.count={signals_count}")
 
         # PnL check: if any PnL is non-zero, signals should have data
         portfolio = body_s.get("portfolio", {})
         total_pnl = portfolio.get("total_pnl", 0)
         unrealized = portfolio.get("unrealized_pnl", 0)
         if (total_pnl != 0 or unrealized != 0) and signals_count == 0:
-            errors.append(
-                f"PnL without positions: total_pnl={total_pnl}, "
-                f"unrealized={unrealized} but signals.count=0"
-            )
+            errors.append(f"PnL without positions: total_pnl={total_pnl}, unrealized={unrealized} but signals.count=0")
 
         # ladder_orders check
         for sig in body_g.get("signals", []):
             lo = sig.get("ladder_orders")
             if lo is not None and not isinstance(lo, list):
-                errors.append(
-                    f"Bet {sig.get('id')}: ladder_orders is {type(lo)}, expected list"
-                )
+                errors.append(f"Bet {sig.get('id')}: ladder_orders is {type(lo)}, expected list")
 
     # 3. Print results
     print("=" * 60)

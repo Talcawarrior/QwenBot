@@ -11,7 +11,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -66,9 +66,7 @@ class BotState:
         self.data_fetcher = PolymarketScraper()
         self.weather_engine = WeatherEngine(self.db_session_factory, self.config)
         self.risk_manager = RiskManager(None, self.config)
-        self.betting_engine = BettingEngine(
-            None, self.risk_manager, self.weather_engine
-        )
+        self.betting_engine = BettingEngine(None, self.risk_manager, self.weather_engine)
         self.settlement_engine = SettlementEngine()
         self.sia_loop = SIALoop(self.db_session_factory, self.config)
 
@@ -107,7 +105,7 @@ app = FastAPI(title="PolyMarket Ultimate Weather Bot", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8091", "http://127.0.0.1:8091"],
+    allow_origins=["http://localhost:8093", "http://127.0.0.1:8093"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
@@ -138,19 +136,17 @@ async def root():
     return HTMLResponse("<h1>Dashboard yukleniyor...</h1>")
 
 
-@app.get("/api/status")
-async def get_status():
-    """Get bot status and metrics with strict accounting."""
+def _get_status_sync():
+    """Synchronous helper for /api/status — runs in a thread."""
     from sqlalchemy import func
 
     from database.models import Analysis, Bet
+
     db = get_db_session()
     try:
         portfolio = db.query(Portfolio).filter(Portfolio.id == 1).first()
 
-        # 1. Realized PnL (Closed bets)
-        from datetime import datetime, timezone
-        _ts = datetime.now(timezone.utc).replace(tzinfo=None)
+        _ts = datetime.now(UTC).replace(tzinfo=None)
         _today_start = _ts.replace(hour=0, minute=0, second=0, microsecond=0)
         daily_pnl = (
             db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
@@ -159,45 +155,33 @@ async def get_status():
         ) or 0.0
 
         realized_pnl_db = (
-            db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
-            .filter(Bet.status.in_(("won", "lost", "settled")))
-            .scalar()
+            db.query(func.coalesce(func.sum(Bet.pnl), 0.0)).filter(Bet.status.in_(("won", "lost", "settled"))).scalar()
         ) or 0.0
 
-        # 2. Unrealized PnL (Open bets)
         open_statuses = OPEN_BET_STATUSES
         unrealized_pnl_db = (
-            db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0))
-            .filter(Bet.status.in_(open_statuses))
-            .scalar()
+            db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0)).filter(Bet.status.in_(open_statuses)).scalar()
         ) or 0.0
 
-        # 3. Counts
         win_count = db.query(Bet).filter(Bet.status == "won").count()
         loss_count = db.query(Bet).filter(Bet.status == "lost").count()
         total_bets_db = db.query(Bet).filter(Bet.status.in_(open_statuses)).count()
         total_signals_db = db.query(Analysis).filter(Analysis.should_bet.is_(True)).count()
 
         exposure_db = (
-            db.query(func.coalesce(func.sum(Bet.amount), 0.0))
-            .filter(Bet.status.in_(open_statuses))
-            .scalar()
+            db.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(open_statuses)).scalar()
         ) or 0.0
 
         initial_capital = state.config.INITIAL_PORTFOLIO
-        total_pnl = realized_pnl_db  # only realized from closed bets
+        total_pnl = realized_pnl_db
 
-        # Total amount staked in settled bets (sum of all bet amounts
-        # regardless of win/loss). ROI = PnL / total_stake, NOT PnL / initial.
         total_stake_settled = (
             db.query(func.coalesce(func.sum(Bet.amount), 0.0))
             .filter(Bet.status.in_(("won", "lost", "settled")))
             .scalar()
         ) or 0.0
 
-        # ROI: profit per dollar wagered on CLOSED bets only (no unrealized)
         total_roi = (realized_pnl_db / total_stake_settled) * 100 if total_stake_settled > 0 else 0
-        # Daily ROI: daily PnL / total stake settled today
         total_stake_today = (
             db.query(func.coalesce(func.sum(Bet.amount), 0.0))
             .filter(Bet.status.in_(("won", "lost", "settled")), Bet.settled_at >= _today_start)
@@ -210,7 +194,7 @@ async def get_status():
             "locked": state.locked,
             "portfolio": {
                 "initial": initial_capital,
-                "current": (initial_capital + realized_pnl_db) - exposure_db,  # net sermaye = (bastaki + kar/zarar) - acik bet
+                "current": (initial_capital + realized_pnl_db) - exposure_db,
                 "daily_pnl": daily_pnl,
                 "daily_roi": daily_roi,
                 "unrealized_pnl": float(unrealized_pnl_db),
@@ -240,46 +224,54 @@ async def get_status():
     finally:
         db.close()
 
-@app.get("/api/markets")
-async def get_markets():
-    """Get all future active weather markets AND missed signals (rejected bets)."""
+
+@app.get("/api/status")
+async def get_status():
+    """Get bot status and metrics with strict accounting."""
+    return await asyncio.to_thread(_get_status_sync)
+
+
+def _get_markets_sync():
+    """Synchronous helper for /api/markets — runs in a thread."""
     from datetime import timedelta
 
     from database.models import Analysis, Bet, WeatherForecast, WeatherMarket
     from engine.calculator import Calculator
+
     db = get_db_session()
     try:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
 
         # 1. Fetch missed signals (should_bet=True but no active bet)
-        # These are the "164 - 8 = 156" signals
         missed_signals = (
             db.query(Analysis, WeatherMarket)
             .join(WeatherMarket, Analysis.market_id == WeatherMarket.id)
             .filter(Analysis.should_bet.is_(True))
-            .filter(~Analysis.market_id.in_(
-                db.query(Bet.market_id).filter(Bet.status.in_(["placed", "active", "open"]))
-            ))
+            .filter(
+                ~Analysis.market_id.in_(db.query(Bet.market_id).filter(Bet.status.in_(["placed", "active", "open"])))
+            )
             .order_by(Analysis.analyzed_at.desc())
             .all()
         )
 
         market_list = []
         for analysis, m in missed_signals:
-            market_list.append({
-                "id": m.id,
-                "city": m.city,
-                "city_code": "SIGNAL",
-                "date": m.target_date.isoformat() if m.target_date else None,
-                "outcome_type": m.metric or "YES",
-                "strike_temp": float(m.threshold) if m.threshold else 0,
-                "current_yes_bid": float(m.yes_price) if m.yes_price else 0,
-                "current_no_bid": float(m.no_price) if m.no_price else 0,
-                "model_prob": float(analysis.estimated_probability),
-                "edge": float(analysis.edge),
-                "ev": safe_ev(analysis.estimated_probability, m.yes_price or 0.5),
-                "status": "REJECTED (Risk Cap)"
-            })
+            market_list.append(
+                {
+                    "id": m.id,
+                    "city": m.city,
+                    "city_code": "SIGNAL",
+                    "date": m.target_date.isoformat() if m.target_date else None,
+                    "outcome_type": m.metric or "YES",
+                    "strike_temp": float(m.threshold) if m.threshold else 0,
+                    "current_yes_bid": float(m.yes_price) if m.yes_price else 0,
+                    "current_no_bid": float(m.no_price) if m.no_price else 0,
+                    "model_prob": float(analysis.estimated_probability),
+                    "edge": float(analysis.edge),
+                    "ev": safe_ev(analysis.estimated_probability, m.yes_price or 0.5),
+                    "status": "REJECTED (Risk Cap)",
+                }
+            )
 
         # 2. Fetch other open markets (today + 7 days)
         upper = now + timedelta(days=7)
@@ -289,7 +281,7 @@ async def get_markets():
                 WeatherMarket.target_date >= now,
                 WeatherMarket.target_date <= upper,
                 WeatherMarket.status == "open",
-                ~WeatherMarket.id.in_([m["id"] for m in market_list])
+                ~WeatherMarket.id.in_([m["id"] for m in market_list]),
             )
             .limit(100)
             .all()
@@ -313,20 +305,22 @@ async def get_markets():
                 days_ahead = max((m.target_date - now).days, 1)
                 model_prob = calc.estimate_probability(latest_vals, float(m.threshold), days_ahead)
 
-            market_list.append({
-                "id": m.id,
-                "city": m.city,
-                "city_code": "",
-                "date": m.target_date.isoformat() if m.target_date else None,
-                "outcome_type": m.metric or "YES",
-                "strike_temp": float(m.threshold),
-                "current_yes_bid": current_price,
-                "current_no_bid": m.no_price or (1-current_price),
-                "model_prob": model_prob,
-                "edge": model_prob - current_price,
-                "ev": safe_ev(model_prob, current_price),
-                "status": "OPEN"
-            })
+            market_list.append(
+                {
+                    "id": m.id,
+                    "city": m.city,
+                    "city_code": "",
+                    "date": m.target_date.isoformat() if m.target_date else None,
+                    "outcome_type": m.metric or "YES",
+                    "strike_temp": float(m.threshold),
+                    "current_yes_bid": current_price,
+                    "current_no_bid": m.no_price or (1 - current_price),
+                    "model_prob": model_prob,
+                    "edge": model_prob - current_price,
+                    "ev": safe_ev(model_prob, current_price),
+                    "status": "OPEN",
+                }
+            )
 
         return {"markets": market_list, "count": len(market_list)}
     except Exception as e:
@@ -335,16 +329,15 @@ async def get_markets():
     finally:
         db.close()
 
-@app.get("/api/bets")
-async def get_bets(status: str = "", limit: int = 100, offset: int = 0):
-    """Get all bets with optional status filter and pagination.
 
-    Query params:
-      status  (str, optional)  -- comma-separated list of statuses to filter by.
-                                Omitting returns ALL statuses.
-      limit   (int, default 100)
-      offset  (int, default 0)
-    """
+@app.get("/api/markets")
+async def get_markets():
+    """Get all future active weather markets AND missed signals (rejected bets)."""
+    return await asyncio.to_thread(_get_markets_sync)
+
+
+def _get_bets_sync(status: str = "", limit: int = 100, offset: int = 0):
+    """Synchronous helper for /api/bets."""
     db = get_db_session()
     try:
         q = db.query(Bet)
@@ -355,20 +348,22 @@ async def get_bets(status: str = "", limit: int = 100, offset: int = 0):
         rows = q.order_by(Bet.placed_at.desc()).offset(offset).limit(limit).all()
         bets = []
         for b in rows:
-            bets.append({
-                "id": b.id,
-                "market_id": b.market_id,
-                "city": b.city or "",
-                "side": b.side or b.outcome or "YES",
-                "amount": float(b.amount or 0),
-                "entry_price": float(b.entry_price or b.price or 0),
-                "current_price": float(b.current_price or b.entry_price or b.price or 0),
-                "status": b.status,
-                "realized_pnl": float(b.realized_pnl or 0),
-                "unrealized_pnl": float(b.unrealized_pnl or 0),
-                "placed_at": b.placed_at.isoformat() if b.placed_at else None,
-                "settled_at": b.settled_at.isoformat() if b.settled_at else None,
-            })
+            bets.append(
+                {
+                    "id": b.id,
+                    "market_id": b.market_id,
+                    "city": b.city or "",
+                    "side": b.side or b.outcome or "YES",
+                    "amount": float(b.amount or 0),
+                    "entry_price": float(b.entry_price or b.price or 0),
+                    "current_price": float(b.current_price or b.entry_price or b.price or 0),
+                    "status": b.status,
+                    "realized_pnl": float(b.realized_pnl or 0),
+                    "unrealized_pnl": float(b.unrealized_pnl or 0),
+                    "placed_at": b.placed_at.isoformat() if b.placed_at else None,
+                    "settled_at": b.settled_at.isoformat() if b.settled_at else None,
+                }
+            )
         return {"bets": bets, "count": len(bets), "total": total}
     except Exception as e:
         logger.error("Bets API error: %s", e)
@@ -376,9 +371,17 @@ async def get_bets(status: str = "", limit: int = 100, offset: int = 0):
     finally:
         db.close()
 
+
+@app.get("/api/bets")
+async def get_bets(status: str = "", limit: int = 100, offset: int = 0):
+    """Get all bets with optional status filter and pagination."""
+    return await asyncio.to_thread(_get_bets_sync, status, limit, offset)
+
+
 # Keep other endpoints (signals, history, cleanup, start, stop, reset, ws, loops, run_cli)
 # exactly as they were in the previous successful read, but I'll write the full file
 # to ensure no truncation.
+
 
 def _safe_parse_ladder(raw):
     if not raw:
@@ -389,9 +392,9 @@ def _safe_parse_ladder(raw):
     except Exception:
         return []
 
-@app.get("/api/signals")
-async def get_signals():
-    """Get all currently active (open) bets with live edge/price data."""
+
+def _get_signals_sync():
+    """Synchronous helper for /api/signals."""
     db = get_db_session()
     try:
         active_bets = db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).all()
@@ -424,22 +427,40 @@ async def get_signals():
                     move_pct = (current - entry) / entry
             except Exception:
                 pass
-            signals.append({
-                "id": bet.id, "market_id": bet.market_id, "city": bet.city or (market.city if market else "Unknown"),
-                "outcome": bet.side or bet.outcome or "YES", "entry_price": entry, "current_price": current,
-                "stake_amount": bet.amount or bet.stake_amount, "unrealized_pnl": float(bet.unrealized_pnl or 0.0),
-                "fair_value": fair_value, "edge": live_edge, "entry_edge": entry_edge, "live_edge": live_edge,
-                "move_pct": move_pct, "ladder_orders": _safe_parse_ladder(bet.ladder_data),
-                "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
-                "resolution_date": res_date.isoformat() if res_date else None, "status": bet.status
-            })
+            signals.append(
+                {
+                    "id": bet.id,
+                    "market_id": bet.market_id,
+                    "city": bet.city or (market.city if market else "Unknown"),
+                    "outcome": bet.side or bet.outcome or "YES",
+                    "entry_price": entry,
+                    "current_price": current,
+                    "stake_amount": bet.amount or bet.stake_amount,
+                    "unrealized_pnl": float(bet.unrealized_pnl or 0.0),
+                    "fair_value": fair_value,
+                    "edge": live_edge,
+                    "entry_edge": entry_edge,
+                    "live_edge": live_edge,
+                    "move_pct": move_pct,
+                    "ladder_orders": _safe_parse_ladder(bet.ladder_data),
+                    "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
+                    "resolution_date": res_date.isoformat() if res_date else None,
+                    "status": bet.status,
+                }
+            )
         return {"signals": signals, "count": len(signals)}
     finally:
         db.close()
 
-@app.get("/api/history")
-async def get_history():
-    """Get settled bet history with win/loss stats."""
+
+@app.get("/api/signals")
+async def get_signals():
+    """Get all currently active (open) bets with live edge/price data."""
+    return await asyncio.to_thread(_get_signals_sync)
+
+
+def _get_history_sync():
+    """Synchronous helper for /api/history."""
     db = get_db_session()
     try:
         settled_bets = (
@@ -457,12 +478,19 @@ async def get_history():
                 total_won += 1
             else:
                 total_lost += 1
-            history.append({
-                "id": bet.id, "city": bet.city, "outcome": bet.side or "YES", "entry_price": bet.price,
-                "stake_amount": bet.amount, "realized_pnl": bet.pnl or 0.0, "result": "WIN" if bet.pnl > 0 else "LOSS",
-                "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
-                "settled_at": bet.settled_at.isoformat() if bet.settled_at else None,
-            })
+            history.append(
+                {
+                    "id": bet.id,
+                    "city": bet.city,
+                    "outcome": bet.side or "YES",
+                    "entry_price": bet.price,
+                    "stake_amount": bet.amount,
+                    "realized_pnl": bet.pnl or 0.0,
+                    "result": "WIN" if bet.pnl > 0 else "LOSS",
+                    "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
+                    "settled_at": bet.settled_at.isoformat() if bet.settled_at else None,
+                }
+            )
         win_rate = (total_won / (total_won + total_lost) * 100) if (total_won + total_lost) > 0 else 0
         return {
             "history": history,
@@ -475,12 +503,18 @@ async def get_history():
     finally:
         db.close()
 
-@app.post("/api/cleanup")
-async def cleanup_old_data():
-    """Cancel stale open bets and refund their stakes (ladder-aware)."""
+
+@app.get("/api/history")
+async def get_history():
+    """Get settled bet history with win/loss stats."""
+    return await asyncio.to_thread(_get_history_sync)
+
+
+def _cleanup_sync():
+    """Synchronous helper for /api/cleanup."""
     db = get_db_session()
     try:
-        _ts = datetime.now(timezone.utc).replace(tzinfo=None)
+        _ts = datetime.now(UTC).replace(tzinfo=None)
         _today_start = _ts.replace(hour=0, minute=0, second=0, microsecond=0)
         stale_analyses = (
             db.query(Analysis)
@@ -491,18 +525,13 @@ async def cleanup_old_data():
         cancelled = 0
         for bet in stale_bets:
             bet.status = "cancelled"
-            bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            bet.settled_at = datetime.now(UTC).replace(tzinfo=None)
 
-            # Calculate the actual debited amount — for ladder bets only
-            # filled rungs were debited; for flat bets the full amount.
             from utils.accounting import credit_sale
+
             ladder = _safe_parse_ladder(bet.ladder_data)
             if ladder:
-                filled_amount = sum(
-                    float(rung.get("amount", 0))
-                    for rung in ladder
-                    if rung.get("status") == "filled"
-                )
+                filled_amount = sum(float(rung.get("amount", 0)) for rung in ladder if rung.get("status") == "filled")
                 refund_amount = filled_amount if filled_amount > 0 else float(bet.amount or 0)
             else:
                 refund_amount = float(bet.amount or 0)
@@ -513,6 +542,13 @@ async def cleanup_old_data():
         return {"deleted_analyses": stale_analyses, "cancelled_bets": cancelled}
     finally:
         db.close()
+
+
+@app.post("/api/cleanup")
+async def cleanup_old_data():
+    """Cancel stale open bets and refund their stakes (ladder-aware)."""
+    return await asyncio.to_thread(_cleanup_sync)
+
 
 @app.post("/api/start")
 async def start_bot():
@@ -526,6 +562,7 @@ async def start_bot():
         state.tasks["settlement"] = asyncio.create_task(settlement_loop())
         return {"status": "started"}
 
+
 @app.post("/api/stop")
 async def stop_bot():
     """Stop all background loops and cancel pending tasks."""
@@ -536,6 +573,7 @@ async def stop_bot():
                 t.cancel()
         state.tasks.clear()
         return {"status": "stopped"}
+
 
 @app.post("/api/reset")
 async def reset_bot():
@@ -572,12 +610,7 @@ async def reset_bot():
         return {
             "status": "reset",
             "message": "Sistem sifirlandi. Lutfen manuel olarak baslatin.",
-            "portfolio": {
-                "current": 1000.0,
-                "exposure": 0.0,
-                "realized_pnl": 0.0,
-                "unrealized_pnl": 0.0
-            }
+            "portfolio": {"current": 1000.0, "exposure": 0.0, "realized_pnl": 0.0, "unrealized_pnl": 0.0},
         }
     except Exception as e:
         db.rollback()
@@ -585,6 +618,7 @@ async def reset_bot():
         return {"error": str(e)}
     finally:
         db.close()
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -597,6 +631,7 @@ async def websocket_endpoint(websocket: WebSocket):
         if websocket in state.websocket_clients:
             state.websocket_clients.remove(websocket)
 
+
 async def scan_and_bet_loop():
     """Background loop: fetch, parse, forecast, analyze, place bets, manage risk."""
     from jobs.scheduler import (
@@ -608,6 +643,7 @@ async def scan_and_bet_loop():
         run_risk_management,
         run_update_prices,
     )
+
     while state.is_running:
         try:
             await asyncio.to_thread(run_fetch_markets)
@@ -622,9 +658,11 @@ async def scan_and_bet_loop():
             logger.error("Scan error: %s", e)
         await asyncio.sleep(state.config.SCAN_INTERVAL)
 
+
 async def settlement_loop():
     """Background loop: run SIA optimization and settle resolved bets."""
     from jobs.scheduler import run_settle
+
     while state.is_running:
         try:
             if state.sia_loop:
@@ -633,6 +671,7 @@ async def settlement_loop():
         except Exception as e:
             logger.error("Settle error: %s", e)
         await asyncio.sleep(state.config.SETTLEMENT_INTERVAL)
+
 
 def run_cli():
     """CLI entry point: run, reset, fetch, parse, weather, analyze, bet, settle, report."""
@@ -650,6 +689,7 @@ def run_cli():
         run_report,
         run_settle,
     )
+
     cmds = {
         "fetch": run_fetch_markets,
         "parse": run_parse_markets,
@@ -660,7 +700,8 @@ def run_cli():
         "report": run_report,
     }
     if args.command == "run":
-        import uvicorn  # noqa: I001
+        import uvicorn
+
         uvicorn.run(app, host=config.HOST, port=config.PORT)
     elif args.command == "reset":
         db = get_db_session()
@@ -672,6 +713,7 @@ def run_cli():
         db.close()
     elif args.command in cmds:
         print(cmds[args.command]())
+
 
 if __name__ == "__main__":
     run_cli()

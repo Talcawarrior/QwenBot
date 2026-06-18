@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import requests
 
@@ -48,33 +48,42 @@ class PolymarketScraper:
         """
         from datetime import timedelta
         from urllib.parse import urlparse
-        today = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        today = datetime.now(UTC).replace(tzinfo=None)
         # Generate date strings in multiple formats to match Polymarket titles
         # which use "June 7" (no zero-pad), "June 07" (zero-pad), or "Jun 7".
         import calendar
+
         date_strs = []
         for i in range(3):
             d = today + timedelta(days=i)
-            month_name = calendar.month_name[d.month]    # "June"
-            month_abbr = calendar.month_abbr[d.month]    # "Jun"
-            day_no_pad = str(d.day)                       # "7"
-            day_zero_pad = f"{d.day:02d}"                 # "07"
-            date_strs.extend([
-                f"{month_name} {day_no_pad}",     # "June 7"
-                f"{month_name} {day_zero_pad}",   # "June 07"
-                f"{month_abbr} {day_no_pad}",     # "Jun 7"
-                f"{month_abbr} {day_zero_pad}",   # "Jun 07"
-            ])
+            month_name = calendar.month_name[d.month]  # "June"
+            month_abbr = calendar.month_abbr[d.month]  # "Jun"
+            day_no_pad = str(d.day)  # "7"
+            day_zero_pad = f"{d.day:02d}"  # "07"
+            date_strs.extend(
+                [
+                    f"{month_name} {day_no_pad}",  # "June 7"
+                    f"{month_name} {day_zero_pad}",  # "June 07"
+                    f"{month_abbr} {day_no_pad}",  # "Jun 7"
+                    f"{month_abbr} {day_zero_pad}",  # "Jun 07"
+                ]
+            )
 
         queries = [
-            "highest temperature", "lowest temperature",
-            "temperature", "weather temperature",
+            "highest temperature",
+            "lowest temperature",
+            "temperature",
+            "weather temperature",
         ]
         # Also add 5 city-specific queries to broaden coverage beyond
         # the public-search top results.
         queries += [
-            "tokyo temperature", "london temperature", "paris temperature",
-            "miami temperature", "seoul temperature",
+            "tokyo temperature",
+            "london temperature",
+            "paris temperature",
+            "miami temperature",
+            "seoul temperature",
         ]
 
         gamma_host = urlparse(self.gamma_url).netloc
@@ -120,10 +129,7 @@ class PolymarketScraper:
                     m.setdefault("event_slug", slug)
                     all_events.append(m)
 
-        logger.info(
-            f"Toplam {len(all_events)} market çekildi "
-            f"({len(seen_slugs)} event, {len(queries)} sorgu)"
-        )
+        logger.info(f"Toplam {len(all_events)} market çekildi ({len(seen_slugs)} event, {len(queries)} sorgu)")
         return all_events
 
     async def fetch_polymarket_events(self, limit: int = 100) -> list[dict]:
@@ -141,30 +147,40 @@ class PolymarketScraper:
         and humidity markets are explicitly rejected.
         """
         question = (
-            market.get("question", "")
-            + " "
-            + market.get("description", "")
-            + " "
-            + market.get("title", "")
+            market.get("question", "") + " " + market.get("description", "") + " " + market.get("title", "")
         ).lower()
         # 1) Must mention a known city (any key from CITY_ICAO_MAP)
-        city_match = any(
-            city_key in question for city_key in config.CITY_ICAO_MAP.keys()
-        )
+        city_match = any(city_key in question for city_key in config.CITY_ICAO_MAP.keys())
         if not city_match:
             return False
         # 2) Must contain a strong weather term (reject sports/politics that
         #    happen to share a city name like "Boston Bruins" or "Dallas Cowboys")
         strong_terms = (
-            "temperature", "highest", "lowest", "heat", "cold",
-            "°F", "°C", "celsius", "fahrenheit", "weather",
+            "temperature",
+            "highest",
+            "lowest",
+            "heat",
+            "cold",
+            "°F",
+            "°C",
+            "celsius",
+            "fahrenheit",
+            "weather",
         )
         if not any(term in question for term in strong_terms):
             return False
         # 3) Explicitly reject non-temperature weather markets (rain, snow, storm, etc.)
         reject_terms = (
-            "rain", "snow", "storm", "hurricane", "tornado",
-            "precipitation", "humidity", "wind", "snowfall", "rainfall",
+            "rain",
+            "snow",
+            "storm",
+            "hurricane",
+            "tornado",
+            "precipitation",
+            "humidity",
+            "wind",
+            "snowfall",
+            "rainfall",
         )
         if any(term in question for term in reject_terms):
             return False
@@ -238,11 +254,7 @@ class PolymarketScraper:
         threshold, threshold_unit, threshold_low, threshold_high = (
             threshold_result if threshold_result else (0.0, "celsius", None, None)
         )
-        metric = (
-            "temperature_max"
-            if "highest" in question_lower or "above" in question_lower
-            else "temperature_min"
-        )
+        metric = "temperature_max" if "highest" in question_lower or "above" in question_lower else "temperature_min"
         city_code = self._extract_city(question)
         market_type = self._determine_market_type(question)
         coords = self.get_city_coords(city_code) if city_code else None
@@ -291,13 +303,10 @@ class PolymarketScraper:
                     parsed = self._parse_market(raw)
 
                     # Markets without ICAO coordinates → no_coords status
-                    has_coords = (
-                        parsed["latitude"] != 0.0 or parsed["longitude"] != 0.0
-                    )
+                    has_coords = parsed["latitude"] != 0.0 or parsed["longitude"] != 0.0
                     if not has_coords and parsed["city_code"]:
                         logger.warning(
-                            "No coordinates for city=%s (ICAO=%s) market=%s "
-                            "question=%r — status=no_coords",
+                            "No coordinates for city=%s (ICAO=%s) market=%s question=%r — status=no_coords",
                             parsed.get("city_name", "?"),
                             parsed["city_code"],
                             parsed["id"],
@@ -305,28 +314,22 @@ class PolymarketScraper:
                         )
 
                     # Upsert
-                    existing = session.query(WeatherMarket).filter_by(
-                        id=parsed["id"]
-                    ).first()
+                    existing = session.query(WeatherMarket).filter_by(id=parsed["id"]).first()
 
                     # Skip markets with missing target_date or zero threshold
                     if parsed["target_date"] is None:
-                        logger.warning(
-                            f"Skipping market {parsed['id']}: no target_date parsed"
-                        )
+                        logger.warning(f"Skipping market {parsed['id']}: no target_date parsed")
                         continue
                     threshold_c = parsed["threshold"]
                     if threshold_c == 0.0:
-                        logger.warning(
-                            f"Skipping market {parsed['id']}: threshold is 0.0"
-                        )
+                        logger.warning(f"Skipping market {parsed['id']}: threshold is 0.0")
                         continue
                     # Sanity guard: Celsius değer -40..55 aralığında değilse atla
                     if threshold_c < -40 or threshold_c > 55:
                         logger.warning(
-                            "Skipping market %s: threshold %.1f°C outside sane "
-                            "range [-40, 55] — question=%r",
-                            parsed["id"], threshold_c,
+                            "Skipping market %s: threshold %.1f°C outside sane range [-40, 55] — question=%r",
+                            parsed["id"],
+                            threshold_c,
                             (parsed.get("question") or "")[:80],
                         )
                         continue
@@ -339,7 +342,7 @@ class PolymarketScraper:
                         existing.volume = parsed["volume"]
                         existing.liquidity = parsed["liquidity"]
                         existing.city = parsed["city"]
-                        existing.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
+                        existing.last_updated = datetime.now(UTC).replace(tzinfo=None)
                         existing.raw_data = parsed["raw_data"]
                         existing.target_date = parsed["target_date"]
                         existing.threshold = parsed["threshold"]
@@ -359,8 +362,8 @@ class PolymarketScraper:
                             volume=parsed["volume"],
                             liquidity=parsed["liquidity"],
                             city=parsed["city"],
-                            first_seen=datetime.now(timezone.utc).replace(tzinfo=None),
-                            last_updated=datetime.now(timezone.utc).replace(tzinfo=None),
+                            first_seen=datetime.now(UTC).replace(tzinfo=None),
+                            last_updated=datetime.now(UTC).replace(tzinfo=None),
                             raw_data=parsed["raw_data"],
                             status=status,
                             target_date=parsed["target_date"],
@@ -401,9 +404,7 @@ class PolymarketScraper:
         if not title:
             return None
         # Pattern 1: "June 9 2026" or "June 9th, 2026" or "Jun 9 2026"
-        match = re.search(
-            r"([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})", title
-        )
+        match = re.search(r"([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})", title)
         if match:
             month_str, day, year = match.group(1), int(match.group(2)), int(match.group(3))
             for fmt in ("%B %d %Y", "%b %d %Y"):
@@ -424,9 +425,7 @@ class PolymarketScraper:
             "August|September|October|November|December|"
             "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
         )
-        match = re.search(
-            rf"(?:{_MONTH_NAMES})\s+(\d{{1,2}})", title, re.IGNORECASE
-        )
+        match = re.search(rf"(?:{_MONTH_NAMES})\s+(\d{{1,2}})", title, re.IGNORECASE)
         if match:
             month_str, day = match.group(0).split()[0], int(match.group(1))
             today = datetime.now()
@@ -472,17 +471,9 @@ class PolymarketScraper:
 
     def _determine_market_type(self, question: str) -> str:
         question_lower = question.lower()
-        if (
-            "above" in question_lower
-            or "higher" in question_lower
-            or "over" in question_lower
-        ):
+        if "above" in question_lower or "higher" in question_lower or "over" in question_lower:
             return "HIGH"
-        if (
-            "below" in question_lower
-            or "lower" in question_lower
-            or "under" in question_lower
-        ):
+        if "below" in question_lower or "lower" in question_lower or "under" in question_lower:
             return "LOW"
         if "or below" in question_lower or "or higher" in question_lower:
             if "or below" in question_lower:

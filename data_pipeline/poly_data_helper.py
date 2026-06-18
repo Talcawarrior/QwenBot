@@ -4,8 +4,9 @@ Integrates with warproxxx/poly_data datasets to load and process millions of
 on-chain trades, order-filled events, and market configurations.
 """
 
-import os
 import logging
+import os
+
 import pandas as pd
 import requests
 
@@ -46,18 +47,28 @@ class PolyDataPipeline:
 
         try:
             df = pd.read_csv(LOCAL_MARKETS_PATH)
-            
+
             # Polymarket weather keyword matching
             weather_keywords = [
-                "temperature", "temp", "celsius", "fahrenheit", "degrees", 
-                "weather", "rain", "snow", "precipitation", "highest", "lowest"
+                "temperature",
+                "temp",
+                "celsius",
+                "fahrenheit",
+                "degrees",
+                "weather",
+                "rain",
+                "snow",
+                "precipitation",
+                "highest",
+                "lowest",
             ]
             pattern = "|".join(weather_keywords)
-            
+
             # Filter weather markets based on the question column
             weather_df = df[df["question"].str.contains(pattern, case=False, na=False)].copy()
-            logger.info("PolyData: Filtered %d weather-related prediction markets out of %d total", 
-                        len(weather_df), len(df))
+            logger.info(
+                "PolyData: Filtered %d weather-related prediction markets out of %d total", len(weather_df), len(df)
+            )
             return weather_df
         except Exception as e:
             logger.error("PolyData: Error loading markets data frame: %s", e)
@@ -73,13 +84,13 @@ class PolyDataPipeline:
         if os.path.exists(trades_path):
             logger.info("PolyData: Loading trades from local file...")
             return pd.read_csv(trades_path)
-        
+
         # Skeleton/mock fallback: Generate realistic sample trade data for cold-starts
         logger.info("PolyData: Local poly_trades.csv not found. Generating a mock dataset based on S3 schemas...")
         mock_trades = []
         import random
         from datetime import datetime, timedelta
-        
+
         # Fetch weather markets to link our mock trades to actual market IDs
         weather_df = self.get_weather_markets()
         market_ids = list(weather_df["id"].unique()) if not weather_df.empty else ["2513866", "2528144"]
@@ -90,19 +101,21 @@ class PolyDataPipeline:
             side = random.choice(["YES", "NO"])
             price = random.uniform(0.10, 0.90)
             usd_amount = random.uniform(50.0, 5000.0)
-            mock_trades.append({
-                "timestamp": (now - timedelta(minutes=i*15)).isoformat(),
-                "market_id": m_id,
-                "maker": f"0x{random.randint(10**35, 10**36):x}",
-                "taker": f"0x{random.randint(10**35, 10**36):x}",
-                "maker_direction": "SELL" if side == "YES" else "BUY",
-                "taker_direction": "BUY" if side == "YES" else "SELL",
-                "price": round(price if side == "YES" else 1.0 - price, 3),
-                "usd_amount": round(usd_amount, 2),
-                "token_amount": round(usd_amount / price, 2),
-                "transactionHash": f"0x{random.randint(10**63, 10**64):x}"
-            })
-        
+            mock_trades.append(
+                {
+                    "timestamp": (now - timedelta(minutes=i * 15)).isoformat(),
+                    "market_id": m_id,
+                    "maker": f"0x{random.randint(10**35, 10**36):x}",
+                    "taker": f"0x{random.randint(10**35, 10**36):x}",
+                    "maker_direction": "SELL" if side == "YES" else "BUY",
+                    "taker_direction": "BUY" if side == "YES" else "SELL",
+                    "price": round(price if side == "YES" else 1.0 - price, 3),
+                    "usd_amount": round(usd_amount, 2),
+                    "token_amount": round(usd_amount / price, 2),
+                    "transactionHash": f"0x{random.randint(10**63, 10**64):x}",
+                }
+            )
+
         df = pd.DataFrame(mock_trades)
         df.to_csv(trades_path, index=False)
         logger.info("PolyData: Mock trades dataset saved successfully. Ready for ML/AI post-processing!")

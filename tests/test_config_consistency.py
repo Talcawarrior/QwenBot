@@ -11,16 +11,16 @@ def test_import_config_settings_does_not_raise():
 def test_strategy_config_min_edge_default():
     """bot_config.strategy.min_edge should match the current config value."""
     from config.settings import bot_config
+
     # This test documents the actual value; update if config changes.
-    assert bot_config.strategy.min_edge == 0.05, (
-        f"Expected min_edge=0.05, got {bot_config.strategy.min_edge}"
-    )
+    assert bot_config.strategy.min_edge == 0.05, f"Expected min_edge=0.05, got {bot_config.strategy.min_edge}"
 
 
 def test_config_fee_drag_matches_strategy():
     """Config.FEE_DRAG should equal bot_config.strategy.fee_drag."""
     from config.settings import bot_config, config
-    assert config.FEE_DRAG == bot_config.strategy.fee_drag, (
+
+    assert bot_config.strategy.fee_drag == config.FEE_DRAG, (
         f"FEE_DRAG={config.FEE_DRAG} != strategy.fee_drag={bot_config.strategy.fee_drag}"
     )
 
@@ -28,7 +28,7 @@ def test_config_fee_drag_matches_strategy():
 def test_config_kelly_fraction_matches_strategy():
     """Config.KELLY_FRACTION should equal bot_config.strategy.kelly_fraction."""
     from config.settings import bot_config, config
-    assert config.KELLY_FRACTION == bot_config.strategy.kelly_fraction, (
-        f"KELLY_FRACTION={config.KELLY_FRACTION} != "
-        f"strategy.kelly_fraction={bot_config.strategy.kelly_fraction}"
+
+    assert bot_config.strategy.kelly_fraction == config.KELLY_FRACTION, (
+        f"KELLY_FRACTION={config.KELLY_FRACTION} != strategy.kelly_fraction={bot_config.strategy.kelly_fraction}"
     )

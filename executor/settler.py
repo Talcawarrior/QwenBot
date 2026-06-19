@@ -196,16 +196,13 @@ class SettlementEngine:
 
         Returns ``"YES"``, ``"NO"``, or ``None`` if not yet resolved.
 
-        Resolution criteria (ALL must hold):
-          1. ``closed == true``
-          2. ``umaResolutionStatus == "resolved"``
-          3. ``outcomePrices`` is a parseable JSON string list
+        Resolution criteria:
+          PRIMARY: closed == true AND umaResolutionStatus == "resolved"
+          FALLBACK: outcomePrices show a decisive result (>= 0.99 on one side)
+                    even if Polymarket hasn't officially closed the market yet.
         """
         data = self._call_gamma_api(market)
         if data is None:
-            return None
-
-        if not data.get("closed") or data.get("umaResolutionStatus") != "resolved":
             return None
 
         prices = self._parse_outcome_prices(market, data.get("outcomePrices"))
@@ -223,17 +220,27 @@ class SettlementEngine:
             )
             return None
 
+        # Check for decisive outcome (>= 0.99 on one side)
         if yes_price >= 0.99:
             outcome = "YES"
         elif no_price >= 0.99:
             outcome = "NO"
         else:
             logger.warning(
-                "Split/no-clear resolution for %s: outcomePrices=%s (neither side >= 0.99)",
+                "Split/no-clear resolution for %s: outcomePrices=%s "
+                "(neither side >= 0.99)",
                 market.id,
                 prices,
             )
             return None
+
+        # Require official resolution OR let decisive prices through
+        if not data.get("closed") and data.get("umaResolutionStatus") != "resolved":
+            logger.info(
+                "Market %s not officially closed but prices decisive (%s=%.4f). "
+                "Settling based on price data.",
+                market.id, outcome, yes_price if outcome == "YES" else no_price,
+            )
 
         market.raw_data = json.dumps(
             {

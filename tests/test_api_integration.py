@@ -85,6 +85,6 @@ def test_dashboard_html_served(client):
     resp = client.get("/")
     assert resp.status_code == 200, resp.text
     body = resp.text
-    assert "PolyMarket" in body
+    assert "Qwen" in body
     assert "Chart" in body or "chart" in body
     assert "@media" in body

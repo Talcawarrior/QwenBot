@@ -154,7 +154,7 @@ python main.py settle               # Settle resolved bets
 python main.py reset                # Reset portfolio
 ```
 
-Dashboard: **http://127.0.0.1:8091**
+Dashboard: **http://127.0.0.1:8092**
 
 ---
 
@@ -176,13 +176,13 @@ Dashboard: **http://127.0.0.1:8091**
 | `POLY_API_KEY` | – | Polymarket API key |
 | `WEATHERAPI_KEY` | – | WeatherAPI.com fallback key |
 | `HOST` | `127.0.0.1` | Server bind address |
-| `PORT` | `8091` | Dashboard port |
+| `PORT` | `8092` | Dashboard port |
 
 ---
 
 ## Dashboard
 
-The web dashboard at **http://127.0.0.1:8091** features:
+The web dashboard at **http://127.0.0.1:8092** features:
 
 **Portfolio Metrics (compact 2×4 grid):**
 | Row 1 | Net Sermaye | Açık Bahis | Açık PnL | Kapalı PnL |

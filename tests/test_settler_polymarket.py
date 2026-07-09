@@ -122,14 +122,14 @@ def _setup_market_with_bets(
 
 def _gamma_mock(closed=True, status="resolved", outcome_prices=None):
     """Build a MagicMock that mimics the Gamma API response for a resolved market."""
-    if outcome_prices is None:
-        outcome_prices = ["1", "0"]
     mock = MagicMock()
-    mock.json.return_value = {
+    response = {
         "closed": closed,
         "umaResolutionStatus": status,
-        "outcomePrices": outcome_prices,
     }
+    if outcome_prices is not None:
+        response["outcomePrices"] = outcome_prices
+    mock.json.return_value = response
     mock.raise_for_status = MagicMock()
     return mock
 

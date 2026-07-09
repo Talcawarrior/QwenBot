@@ -177,7 +177,7 @@ class Config:
     DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 
     HOST = os.getenv("HOST", "0.0.0.0")
-    PORT = int(os.getenv("PORT", "8093"))
+    PORT = int(os.getenv("PORT", "8092"))
 
     ICAO_COORDS = {
         # Turkey (4)

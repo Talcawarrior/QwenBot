@@ -105,7 +105,7 @@ app = FastAPI(title="PolyMarket Ultimate Weather Bot", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8093", "http://127.0.0.1:8093"],
+    allow_origins=["http://localhost:8092", "http://127.0.0.1:8092"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
@@ -243,19 +243,21 @@ def _get_markets_sync():
         now = datetime.now(UTC).replace(tzinfo=None)
 
         # 1. Fetch missed signals (should_bet=True but no active bet)
+        active_bet_ids = db.query(Bet.market_id).filter(Bet.status.in_(["placed", "active", "open"])).subquery()
         missed_signals = (
             db.query(Analysis, WeatherMarket)
             .join(WeatherMarket, Analysis.market_id == WeatherMarket.id)
             .filter(Analysis.should_bet.is_(True))
-            .filter(
-                ~Analysis.market_id.in_(db.query(Bet.market_id).filter(Bet.status.in_(["placed", "active", "open"])))
-            )
+            .filter(~Analysis.market_id.in_(active_bet_ids))
             .order_by(Analysis.analyzed_at.desc())
+            .limit(100)
             .all()
         )
 
+        missed_ids = set()
         market_list = []
         for analysis, m in missed_signals:
+            missed_ids.add(m.id)
             market_list.append(
                 {
                     "id": m.id,
@@ -275,17 +277,29 @@ def _get_markets_sync():
 
         # 2. Fetch other open markets (today + 7 days)
         upper = now + timedelta(days=7)
-        markets = (
-            db.query(WeatherMarket)
-            .filter(
-                WeatherMarket.target_date >= now,
-                WeatherMarket.target_date <= upper,
-                WeatherMarket.status == "open",
-                ~WeatherMarket.id.in_([m["id"] for m in market_list]),
+        if missed_ids:
+            markets = (
+                db.query(WeatherMarket)
+                .filter(
+                    WeatherMarket.target_date >= now,
+                    WeatherMarket.target_date <= upper,
+                    WeatherMarket.status == "open",
+                    ~WeatherMarket.id.in_(missed_ids),
+                )
+                .limit(100)
+                .all()
             )
-            .limit(100)
-            .all()
-        )
+        else:
+            markets = (
+                db.query(WeatherMarket)
+                .filter(
+                    WeatherMarket.target_date >= now,
+                    WeatherMarket.target_date <= upper,
+                    WeatherMarket.status == "open",
+                )
+                .limit(100)
+                .all()
+            )
 
         calc = Calculator()
         for m in markets:
@@ -465,7 +479,7 @@ def _get_history_sync():
     try:
         settled_bets = (
             db.query(Bet)
-            .filter(Bet.status.in_(["settled", "won", "lost"]))
+            .filter(Bet.status.in_(["won", "lost", "closed_early"]))
             .order_by(Bet.settled_at.desc())
             .limit(50)
             .all()
